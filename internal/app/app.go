@@ -67,6 +67,8 @@ var (
 			Padding(0, 1)
 	helpStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244"))
+	statusStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252"))
 	inputBoxStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("62")).
@@ -136,12 +138,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		contentWidth := max(20, msg.Width-4)
 		headerHeight := lipgloss.Height(m.renderHeader())
 		inputHeight := 3
+		statusHeight := 1
 		helpHeight := 1
-		viewportHeight := max(5, msg.Height-headerHeight-inputHeight-helpHeight-4)
+		viewportHeight := max(5, msg.Height-headerHeight-inputHeight-statusHeight-helpHeight-4)
 
 		m.viewport.Width = contentWidth
 		m.viewport.Height = viewportHeight
 		m.input.Width = max(10, contentWidth-4)
+		if modelsPage, ok := m.pages[pageModels].(*models.Page); ok {
+			modelsPage.SetSize(contentWidth, viewportHeight)
+		}
 		m.syncViewport()
 	case tea.KeyMsg:
 		switch {
@@ -154,6 +160,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.syncViewport()
 			}
 			return m, nil
+		case m.current == pageModels:
+			modelsPage, ok := m.pages[pageModels].(*models.Page)
+			if !ok {
+				return m, nil
+			}
+			if key.Matches(msg, m.keys.Send) {
+				return m.handleModelByID(modelsPage.SelectedModelID())
+			}
+			cmd := modelsPage.Update(msg)
+			m.syncViewport()
+			return m, cmd
 		case key.Matches(msg, m.keys.Send):
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
@@ -193,6 +210,7 @@ func (m Model) View() string {
 		m.renderHeader(),
 		m.viewport.View(),
 		inputBoxStyle.Width(m.viewport.Width).Render(m.input.View()),
+		m.renderModelStatus(),
 		helpStyle.Render(m.help.View(m.keys)),
 	)
 
@@ -316,8 +334,26 @@ func (m Model) renderHeader() string {
 	return headerStyle.Width(max(20, m.width-4)).Render(" " + title + " ")
 }
 
+func (m Model) renderModelStatus() string {
+	model, err := m.config.ActiveModel()
+	if err != nil {
+		return statusStyle.Render("model: unavailable")
+	}
+
+	return statusStyle.Render(
+		fmt.Sprintf("model: %s  context: %s", model.ID, formatContextWindow(model.ContextWindow)),
+	)
+}
+
 func (m Model) currentPage() shared.Page {
 	return m.pages[m.current]
+}
+
+func formatContextWindow(size int) string {
+	if size%1000 == 0 {
+		return fmt.Sprintf("%dk", size/1000)
+	}
+	return fmt.Sprintf("%.1fk", float64(size)/1000)
 }
 
 func max(a, b int) int {
