@@ -11,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	agenttools "go-cli/internal/agent/tools"
 	"go-cli/internal/config"
 	"go-cli/internal/eventbus"
 	"go-cli/internal/events"
@@ -18,6 +19,7 @@ import (
 	"go-cli/internal/modules/models"
 	"go-cli/internal/modules/resume"
 	"go-cli/internal/modules/shared"
+	toolspage "go-cli/internal/modules/tools"
 	chatservice "go-cli/internal/services/chat"
 )
 
@@ -27,6 +29,7 @@ const (
 	pageChat   pageID = "chat"
 	pageModels pageID = "models"
 	pageResume pageID = "resume"
+	pageTools  pageID = "tools"
 )
 
 type keyMap struct {
@@ -102,7 +105,7 @@ type Model struct {
 func NewModel(cfg config.State) Model {
 	input := textinput.New()
 	input.Prompt = "> "
-	input.Placeholder = "Type a message or use /resume or /models"
+	input.Placeholder = "Type a message or use /resume or /models or /tools"
 	input.Focus()
 	input.CharLimit = 280
 
@@ -112,6 +115,7 @@ func NewModel(cfg config.State) Model {
 		pageChat:   chat.NewPage(activeModel),
 		pageModels: models.NewPage(cfg.Config.Models, cfg.Config.CurrentModel),
 		pageResume: resume.NewPage(),
+		pageTools:  toolspage.NewPage(agenttools.Specs(activeModel)),
 	}
 	events, _ := bus.Subscribe(128)
 
@@ -330,6 +334,11 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.handleResumeByID(parts[1])
+	case "tools":
+		m.current = pageTools
+		m.input.Placeholder = m.currentPage().Placeholder()
+		m.syncViewport()
+		return m, nil
 	case "clear":
 		activeModel, err := m.config.ActiveModel()
 		if err != nil {
@@ -345,7 +354,7 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		return m, nil
 	default:
 		if page := m.currentPage(); page != nil {
-			page.SystemMessage(fmt.Sprintf("Unknown command: /%s\nAvailable commands: /chat /models /models <id> /resume /resume <id> /clear", parts[0]))
+			page.SystemMessage(fmt.Sprintf("Unknown command: /%s\nAvailable commands: /chat /models /models <id> /resume /resume <id> /tools /clear", parts[0]))
 		}
 		m.syncViewport()
 		return m, nil
@@ -367,6 +376,10 @@ func (m *Model) handleModelByID(id string) (tea.Model, tea.Cmd) {
 	modelsPage, ok := m.pages[pageModels].(*models.Page)
 	if ok {
 		modelsPage.SetCurrentModel(id)
+	}
+	toolsPage, ok := m.pages[pageTools].(*toolspage.Page)
+	if ok {
+		*toolsPage = *toolspage.NewPage(agenttools.Specs(model))
 	}
 
 	m.current = pageChat
@@ -556,6 +569,7 @@ func newSlashMenu() slashMenu {
 		{command: "/chat", description: "back to chat page"},
 		{command: "/models", description: "open model selector"},
 		{command: "/resume", description: "open session resume page"},
+		{command: "/tools", description: "inspect tool definitions"},
 		{command: "/clear", description: "clear current chat"},
 	}
 	return slashMenu{commands: commands}

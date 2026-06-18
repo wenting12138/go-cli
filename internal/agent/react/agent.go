@@ -14,7 +14,7 @@ import (
 type Tool interface {
 	Name() string
 	Description() string
-	Parameters() map[string]any
+	Parameters() ParameterSchema
 	ValidateArgs(args map[string]any) error
 	Run(ctx context.Context, args map[string]any) (string, error)
 }
@@ -175,7 +175,7 @@ func (a *Agent) toolDefinitions() []protocol.ToolDefinition {
 		definitions = append(definitions, protocol.ToolDefinition{
 			Name:        tool.Name(),
 			Description: tool.Description(),
-			Parameters:  cloneArgs(tool.Parameters()),
+			Parameters:  tool.Parameters().ToMap(),
 		})
 	}
 	return definitions

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"go-cli/internal/agent/react"
 	"go-cli/internal/config"
 )
 
@@ -19,10 +20,10 @@ func (t ActiveModel) Description() string {
 	return "Returns the current model id, provider, model name, and context window."
 }
 
-func (t ActiveModel) Parameters() map[string]any {
-	return map[string]any{
-		"type":       "object",
-		"properties": map[string]any{},
+func (t ActiveModel) Parameters() react.ParameterSchema {
+	return react.ParameterSchema{
+		Type:       "object",
+		Properties: map[string]react.ParameterSchema{},
 	}
 }
 

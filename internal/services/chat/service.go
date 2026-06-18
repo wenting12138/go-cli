@@ -27,10 +27,7 @@ func (s *Service) StartStream(model config.ModelConfig, messages []domain.Messag
 	if err != nil {
 		return err
 	}
-	agent := react.New(client, []react.Tool{
-		tools.TimeNow{},
-		tools.ActiveModel{Model: model},
-	})
+	agent := react.New(client, tools.Build(model))
 
 	requestID := fmt.Sprintf("chat-%d", time.Now().UnixNano())
 	s.bus.Publish(events.ChatStreamStarted{RequestID: requestID})
