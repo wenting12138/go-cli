@@ -13,6 +13,7 @@ import (
 
 	"go-cli/internal/config"
 	"go-cli/internal/modules/chat"
+	"go-cli/internal/modules/chat/bot"
 	"go-cli/internal/modules/models"
 	"go-cli/internal/modules/resume"
 	"go-cli/internal/modules/shared"
@@ -85,6 +86,7 @@ type Model struct {
 	current  pageID
 	pages    map[pageID]shared.Page
 	config   config.State
+	stream   <-chan tea.Msg
 }
 
 func NewModel(cfg config.State) Model {
@@ -172,6 +174,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncViewport()
 			return m, cmd
 		case key.Matches(msg, m.keys.Send):
+			if m.stream != nil {
+				if page := m.currentPage(); page != nil {
+					page.SystemMessage("wait for the current response to finish")
+				}
+				m.syncViewport()
+				return m, nil
+			}
+
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
 				return m, nil
@@ -191,6 +201,32 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if page, ok := m.pages[pageID(msg.Page)]; ok {
 			page.ApplyUpdate(msg)
 		}
+		m.syncViewport()
+		return m, nil
+	case bot.StreamStartedMsg:
+		m.stream = msg.Events
+		return m, bot.WaitStreamCmd(msg.Events)
+	case bot.StreamChunkMsg:
+		if chatPage, ok := m.pages[pageChat].(*chat.Page); ok {
+			chatPage.AppendStream(msg.Chunk)
+		}
+		m.syncViewport()
+		if m.stream != nil {
+			return m, bot.WaitStreamCmd(m.stream)
+		}
+		return m, nil
+	case bot.StreamErrorMsg:
+		if chatPage, ok := m.pages[pageChat].(*chat.Page); ok {
+			chatPage.FailStream(msg.Err)
+		}
+		m.stream = nil
+		m.syncViewport()
+		return m, nil
+	case bot.StreamDoneMsg:
+		if chatPage, ok := m.pages[pageChat].(*chat.Page); ok {
+			chatPage.FinishStream()
+		}
+		m.stream = nil
 		m.syncViewport()
 		return m, nil
 	}

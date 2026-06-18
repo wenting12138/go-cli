@@ -27,13 +27,15 @@ var (
 )
 
 type Page struct {
-	messages []domain.Message
-	model    config.ModelConfig
+	messages    []domain.Message
+	model       config.ModelConfig
+	streamIndex int
 }
 
 func NewPage(model config.ModelConfig) *Page {
 	return &Page{
-		model: model,
+		model:       model,
+		streamIndex: -1,
 		messages: []domain.Message{
 			{Role: "system", Content: "Chat CLI ready. Type a message or use /resume or /models."},
 			{Role: "assistant", Content: fmt.Sprintf("This is the main conversation page. Active model: %s/%s, context=%d, max_tokens=%d. Use /resume to open the session recovery page.", model.Provider, model.Name, model.ContextWindow, model.MaxTokens)},
@@ -59,7 +61,10 @@ func (p *Page) Content(width int) string {
 
 func (p *Page) HandleInput(text string) tea.Cmd {
 	p.messages = append(p.messages, domain.Message{Role: "user", Content: text})
-	return bot.ReplyCmd(append([]domain.Message(nil), p.messages...), p.model)
+	requestMessages := append([]domain.Message(nil), p.messages...)
+	p.messages = append(p.messages, domain.Message{Role: "assistant", Content: ""})
+	p.streamIndex = len(p.messages) - 1
+	return bot.ReplyCmd(requestMessages, p.model)
 }
 
 func (p *Page) ApplyUpdate(msg shared.PageUpdatedMsg) {
@@ -85,6 +90,33 @@ func (p *Page) SetModel(model config.ModelConfig) {
 	p.messages = append(p.messages, domain.Message{
 		Role:    "system",
 		Content: fmt.Sprintf("Switched model to %s (%s/%s), context=%d, max_tokens=%d.", model.ID, model.Provider, model.Name, model.ContextWindow, model.MaxTokens),
+	})
+}
+
+func (p *Page) AppendStream(chunk string) {
+	if p.streamIndex < 0 || p.streamIndex >= len(p.messages) {
+		return
+	}
+	p.messages[p.streamIndex].Content += chunk
+}
+
+func (p *Page) FinishStream() {
+	if p.streamIndex < 0 || p.streamIndex >= len(p.messages) {
+		p.streamIndex = -1
+		return
+	}
+	p.messages[p.streamIndex].Content = bot.TrimReply(p.messages[p.streamIndex].Content)
+	p.streamIndex = -1
+}
+
+func (p *Page) FailStream(err string) {
+	if p.streamIndex >= 0 && p.streamIndex < len(p.messages) && p.messages[p.streamIndex].Content == "" {
+		p.messages = append(p.messages[:p.streamIndex], p.messages[p.streamIndex+1:]...)
+	}
+	p.streamIndex = -1
+	p.messages = append(p.messages, domain.Message{
+		Role:    "system",
+		Content: err,
 	})
 }
 

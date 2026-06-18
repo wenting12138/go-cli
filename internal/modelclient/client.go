@@ -12,7 +12,7 @@ import (
 )
 
 type Client interface {
-	Chat(ctx context.Context, messages []domain.Message) (string, error)
+	StreamChat(ctx context.Context, messages []domain.Message, onChunk func(string) error) error
 }
 
 func New(model config.ModelConfig) (Client, error) {

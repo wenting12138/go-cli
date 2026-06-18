@@ -11,42 +11,67 @@ import (
 	"go-cli/internal/config"
 	"go-cli/internal/modelclient"
 	"go-cli/internal/modules/chat/domain"
-	"go-cli/internal/modules/shared"
 )
 
-const pageName = "chat"
+type StreamStartedMsg struct {
+	Events <-chan tea.Msg
+}
+
+type StreamChunkMsg struct {
+	Chunk string
+}
+
+type StreamErrorMsg struct {
+	Err string
+}
+
+type StreamDoneMsg struct{}
 
 func ReplyCmd(messages []domain.Message, model config.ModelConfig) tea.Cmd {
 	return func() tea.Msg {
-		client, err := modelclient.New(model)
-		if err != nil {
-			return failureMessage(err)
-		}
+		events := make(chan tea.Msg, 32)
 
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-		defer cancel()
+		go func() {
+			defer close(events)
 
-		reply, err := client.Chat(ctx, messages)
-		if err != nil {
-			return failureMessage(err)
-		}
+			client, err := modelclient.New(model)
+			if err != nil {
+				events <- StreamErrorMsg{Err: fmt.Sprintf("model request failed: %s", err)}
+				return
+			}
 
-		return shared.PageUpdatedMsg{
-			Page: pageName,
-			Payload: domain.Message{
-				Role:    "assistant",
-				Content: strings.TrimSpace(reply),
-			},
-		}
+			ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+			defer cancel()
+
+			err = client.StreamChat(ctx, messages, func(chunk string) error {
+				if chunk == "" {
+					return nil
+				}
+				events <- StreamChunkMsg{Chunk: chunk}
+				return nil
+			})
+			if err != nil {
+				events <- StreamErrorMsg{Err: fmt.Sprintf("model request failed: %s", err)}
+				return
+			}
+
+			events <- StreamDoneMsg{}
+		}()
+
+		return StreamStartedMsg{Events: events}
 	}
 }
 
-func failureMessage(err error) tea.Msg {
-	return shared.PageUpdatedMsg{
-		Page: pageName,
-		Payload: domain.Message{
-			Role:    "system",
-			Content: fmt.Sprintf("model request failed: %s", err),
-		},
+func WaitStreamCmd(events <-chan tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		msg, ok := <-events
+		if !ok {
+			return StreamDoneMsg{}
+		}
+		return msg
 	}
+}
+
+func TrimReply(content string) string {
+	return strings.TrimSpace(content)
 }
