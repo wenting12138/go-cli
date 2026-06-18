@@ -14,27 +14,32 @@ import (
 )
 
 type pageID string
+type focusMode string
 
 const (
 	pageChat   pageID = "chat"
 	pageModels pageID = "models"
 	pageResume pageID = "resume"
 	pageTools  pageID = "tools"
+
+	focusInput    focusMode = "input"
+	focusViewport focusMode = "viewport"
 )
 
 type keyMap struct {
-	Send key.Binding
-	Back key.Binding
-	Quit key.Binding
+	Send  key.Binding
+	Back  key.Binding
+	Quit  key.Binding
+	Focus key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Send, k.Back, k.Quit}
+	return []key.Binding{k.Send, k.Focus, k.Back, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Send, k.Back},
+		{k.Send, k.Focus, k.Back},
 		{k.Quit},
 	}
 }
@@ -47,6 +52,10 @@ var keys = keyMap{
 	Back: key.NewBinding(
 		key.WithKeys("esc"),
 		key.WithHelp("esc", "back to chat"),
+	),
+	Focus: key.NewBinding(
+		key.WithKeys("tab"),
+		key.WithHelp("tab", "toggle focus"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
@@ -90,6 +99,7 @@ type Model struct {
 	events   <-chan any
 	chatSvc  *chatservice.Service
 	slash    slashMenu
+	focus    focusMode
 }
 
 type eventMsg struct {

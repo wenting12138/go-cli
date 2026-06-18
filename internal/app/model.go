@@ -48,6 +48,7 @@ func NewModel(cfg config.State) Model {
 		events:   events,
 		chatSvc:  chatservice.New(bus),
 		slash:    newSlashMenu(),
+		focus:    focusInput,
 	}
 }
 
@@ -57,7 +58,7 @@ func Run() error {
 		return err
 	}
 
-	program := tea.NewProgram(NewModel(cfg), tea.WithAltScreen())
+	program := tea.NewProgram(NewModel(cfg), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err = program.Run()
 	return err
 }
@@ -72,14 +73,37 @@ func (m *Model) syncViewport() {
 	if page == nil {
 		return
 	}
+
+	currentOffset := m.viewport.YOffset
+	wasAtBottom := m.viewport.AtBottom()
+
 	m.input.Placeholder = page.Placeholder()
 	m.updateSlashMenu()
 	m.viewport.SetContent(page.Content(m.viewport.Width))
-	m.viewport.GotoTop()
+	if m.current == pageChat && wasAtBottom {
+		m.viewport.GotoBottom()
+		return
+	}
+
+	maxOffset := m.viewport.TotalLineCount() - m.viewport.Height
+	if maxOffset < 0 {
+		maxOffset = 0
+	}
+	if currentOffset > maxOffset {
+		currentOffset = maxOffset
+	}
+	if currentOffset < 0 {
+		currentOffset = 0
+	}
+	m.viewport.YOffset = currentOffset
 }
 
 func (m Model) currentPage() shared.Page {
 	return m.pages[m.current]
+}
+
+func (m Model) contentWidth() int {
+	return max(20, m.width-4)
 }
 
 func formatContextWindow(size int) string {

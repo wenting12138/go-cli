@@ -41,20 +41,23 @@ func (p *Page) Placeholder() string {
 }
 
 func (p *Page) Content(width int) string {
+	textWidth := max(20, width)
+	codeWidth := max(20, width-4)
+
 	lines := []string{
 		titleStyle.Render("Available tools"),
-		hintStyle.Width(max(20, width)).Render("These are the tool definitions currently exposed to the model."),
+		hintStyle.Width(textWidth).Render("These are the tool definitions currently exposed to the model."),
 	}
 
 	for _, spec := range p.specs {
 		lines = append(lines, "")
 		lines = append(lines, nameStyle.Render(spec.Name))
-		lines = append(lines, bodyStyle.Width(max(20, width)).Render(spec.Description))
-		lines = append(lines, codeStyle.Width(max(20, width)).Render(formatSchema(spec.Parameters)))
+		lines = append(lines, bodyStyle.Width(textWidth).Render(spec.Description))
+		lines = append(lines, codeStyle.Width(codeWidth).Render(formatSchema(spec.Parameters)))
 	}
 
 	if p.systemNotice != "" {
-		lines = append(lines, "", hintStyle.Width(max(20, width)).Render(p.systemNotice))
+		lines = append(lines, "", hintStyle.Width(textWidth).Render(p.systemNotice))
 	}
 
 	return strings.Join(lines, "\n")

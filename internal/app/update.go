@@ -24,23 +24,29 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.help.Width = msg.Width
 
-		contentWidth := max(20, msg.Width-4)
+		contentWidth := m.contentWidth()
+		m.input.Width = max(10, contentWidth-4)
+		m.viewport.Width = max(18, contentWidth-2)
+		if modelsPage, ok := m.pages[pageModels].(*models.Page); ok {
+			modelsPage.SetSize(contentWidth, m.viewport.Height)
+		}
+
 		headerHeight := lipgloss.Height(m.renderHeader())
-		inputHeight := 3
+		inputHeight := lipgloss.Height(m.renderBottomPanel())
 		slashHeight := m.renderSlashMenuHeight(contentWidth)
-		statusHeight := 1
-		helpHeight := 1
+		statusHeight := lipgloss.Height(m.renderModelStatus())
+		helpHeight := lipgloss.Height(helpStyle.Render(m.help.View(m.keys)))
 		viewportHeight := max(5, msg.Height-headerHeight-inputHeight-slashHeight-statusHeight-helpHeight-4)
 
-		m.viewport.Width = contentWidth
 		m.viewport.Height = viewportHeight
-		m.input.Width = max(10, contentWidth-4)
 		if modelsPage, ok := m.pages[pageModels].(*models.Page); ok {
 			modelsPage.SetSize(contentWidth, viewportHeight)
 		}
 		m.syncViewport()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
+	case tea.MouseMsg:
+		return m.handleMouse(msg)
 	case shared.PageUpdatedMsg:
 		if page, ok := m.pages[pageID(msg.Page)]; ok {
 			page.ApplyUpdate(msg)
@@ -63,6 +69,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
 	case key.Matches(msg, m.keys.Quit):
 		return m, tea.Quit
+	case key.Matches(msg, m.keys.Focus):
+		m.toggleFocus()
+		return m, nil
 	case key.Matches(msg, m.keys.Back):
 		return m.handleBackKey()
 	case m.current == pageModels:
@@ -71,14 +80,38 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if handledModel, handledCmd, ok := m.handleSlashMenuKey(msg); ok {
 			return handledModel, handledCmd
 		}
+	case m.focus == focusViewport:
+		m.viewport, _ = m.viewport.Update(msg)
+		return m, nil
 	case key.Matches(msg, m.keys.Send):
 		return m.handleSendKey()
 	}
 
 	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
+	if m.focus == focusInput {
+		m.input, cmd = m.input.Update(msg)
+	} else {
+		m.viewport, cmd = m.viewport.Update(msg)
+	}
 	m.updateSlashMenu()
 	return m, cmd
+}
+
+func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	m.viewport, cmd = m.viewport.Update(msg)
+	return m, cmd
+}
+
+func (m *Model) toggleFocus() {
+	if m.focus == focusInput {
+		m.focus = focusViewport
+		m.input.Blur()
+	} else {
+		m.focus = focusInput
+		m.input.Focus()
+	}
+	m.syncViewport()
 }
 
 func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
