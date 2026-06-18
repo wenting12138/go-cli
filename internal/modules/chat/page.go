@@ -8,7 +8,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"go-cli/internal/config"
-	"go-cli/internal/modules/chat/bot"
 	"go-cli/internal/modules/chat/domain"
 	"go-cli/internal/modules/shared"
 )
@@ -27,9 +26,10 @@ var (
 )
 
 type Page struct {
-	messages    []domain.Message
-	model       config.ModelConfig
-	streamIndex int
+	messages        []domain.Message
+	model           config.ModelConfig
+	streamIndex     int
+	streamRequestID string
 }
 
 func NewPage(model config.ModelConfig) *Page {
@@ -61,10 +61,7 @@ func (p *Page) Content(width int) string {
 
 func (p *Page) HandleInput(text string) tea.Cmd {
 	p.messages = append(p.messages, domain.Message{Role: "user", Content: text})
-	requestMessages := append([]domain.Message(nil), p.messages...)
-	p.messages = append(p.messages, domain.Message{Role: "assistant", Content: ""})
-	p.streamIndex = len(p.messages) - 1
-	return bot.ReplyCmd(requestMessages, p.model)
+	return nil
 }
 
 func (p *Page) ApplyUpdate(msg shared.PageUpdatedMsg) {
@@ -103,10 +100,12 @@ func (p *Page) AppendStream(chunk string) {
 func (p *Page) FinishStream() {
 	if p.streamIndex < 0 || p.streamIndex >= len(p.messages) {
 		p.streamIndex = -1
+		p.streamRequestID = ""
 		return
 	}
-	p.messages[p.streamIndex].Content = bot.TrimReply(p.messages[p.streamIndex].Content)
+	p.messages[p.streamIndex].Content = strings.TrimSpace(p.messages[p.streamIndex].Content)
 	p.streamIndex = -1
+	p.streamRequestID = ""
 }
 
 func (p *Page) FailStream(err string) {
@@ -114,10 +113,33 @@ func (p *Page) FailStream(err string) {
 		p.messages = append(p.messages[:p.streamIndex], p.messages[p.streamIndex+1:]...)
 	}
 	p.streamIndex = -1
+	p.streamRequestID = ""
 	p.messages = append(p.messages, domain.Message{
 		Role:    "system",
 		Content: err,
 	})
+}
+
+func (p *Page) SnapshotMessages() []domain.Message {
+	return append([]domain.Message(nil), p.messages...)
+}
+
+func (p *Page) BeginAssistantStream(requestID string) {
+	p.messages = append(p.messages, domain.Message{Role: "assistant", Content: ""})
+	p.streamIndex = len(p.messages) - 1
+	p.streamRequestID = requestID
+}
+
+func (p *Page) HasActiveStream(requestID string) bool {
+	return p.streamRequestID != "" && p.streamRequestID == requestID
+}
+
+func (p *Page) HasPendingStream() bool {
+	return p.streamRequestID != ""
+}
+
+func (p *Page) ActiveRequestID() string {
+	return p.streamRequestID
 }
 
 func renderMessage(width int, message domain.Message) string {

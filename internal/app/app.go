@@ -12,11 +12,13 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"go-cli/internal/config"
+	"go-cli/internal/eventbus"
+	"go-cli/internal/events"
 	"go-cli/internal/modules/chat"
-	"go-cli/internal/modules/chat/bot"
 	"go-cli/internal/modules/models"
 	"go-cli/internal/modules/resume"
 	"go-cli/internal/modules/shared"
+	chatservice "go-cli/internal/services/chat"
 )
 
 type pageID string
@@ -86,7 +88,9 @@ type Model struct {
 	current  pageID
 	pages    map[pageID]shared.Page
 	config   config.State
-	stream   <-chan tea.Msg
+	bus      *eventbus.Bus
+	events   <-chan any
+	chatSvc  *chatservice.Service
 }
 
 func NewModel(cfg config.State) Model {
@@ -97,11 +101,13 @@ func NewModel(cfg config.State) Model {
 	input.CharLimit = 280
 
 	activeModel, _ := cfg.ActiveModel()
+	bus := eventbus.New()
 	pages := map[pageID]shared.Page{
 		pageChat:   chat.NewPage(activeModel),
 		pageModels: models.NewPage(cfg.Config.Models, cfg.Config.CurrentModel),
 		pageResume: resume.NewPage(),
 	}
+	events, _ := bus.Subscribe(128)
 
 	return Model{
 		viewport: viewport.New(0, 0),
@@ -111,6 +117,9 @@ func NewModel(cfg config.State) Model {
 		current:  pageChat,
 		pages:    pages,
 		config:   cfg,
+		bus:      bus,
+		events:   events,
+		chatSvc:  chatservice.New(bus),
 	}
 }
 
@@ -127,7 +136,7 @@ func Run() error {
 
 func (m Model) Init() tea.Cmd {
 	m.syncViewport()
-	return textinput.Blink
+	return tea.Batch(textinput.Blink, waitEventCmd(m.events))
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -174,14 +183,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncViewport()
 			return m, cmd
 		case key.Matches(msg, m.keys.Send):
-			if m.stream != nil {
-				if page := m.currentPage(); page != nil {
-					page.SystemMessage("wait for the current response to finish")
-				}
-				m.syncViewport()
-				return m, nil
-			}
-
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
 				return m, nil
@@ -190,6 +191,34 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.input.SetValue("")
 			if strings.HasPrefix(text, "/") {
 				return m.handleSlashCommand(text)
+			}
+
+			if m.current == pageChat {
+				chatPage, ok := m.pages[pageChat].(*chat.Page)
+				if !ok {
+					return m, nil
+				}
+				if chatPage.HasPendingStream() {
+					chatPage.SystemMessage("wait for the current response to finish")
+					m.syncViewport()
+					return m, nil
+				}
+
+				chatPage.HandleInput(text)
+				messages := chatPage.SnapshotMessages()
+				activeModel, err := m.config.ActiveModel()
+				if err != nil {
+					chatPage.FailStream(err.Error())
+					m.syncViewport()
+					return m, nil
+				}
+				if err := m.chatSvc.StartStream(activeModel, messages); err != nil {
+					chatPage.FailStream(fmt.Sprintf("model request failed: %s", err))
+					m.syncViewport()
+					return m, nil
+				}
+				m.syncViewport()
+				return m, nil
 			}
 
 			page := m.currentPage()
@@ -203,32 +232,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.syncViewport()
 		return m, nil
-	case bot.StreamStartedMsg:
-		m.stream = msg.Events
-		return m, bot.WaitStreamCmd(msg.Events)
-	case bot.StreamChunkMsg:
-		if chatPage, ok := m.pages[pageChat].(*chat.Page); ok {
-			chatPage.AppendStream(msg.Chunk)
-		}
+	case eventMsg:
+		m.handleEvent(msg.event)
 		m.syncViewport()
-		if m.stream != nil {
-			return m, bot.WaitStreamCmd(m.stream)
-		}
-		return m, nil
-	case bot.StreamErrorMsg:
-		if chatPage, ok := m.pages[pageChat].(*chat.Page); ok {
-			chatPage.FailStream(msg.Err)
-		}
-		m.stream = nil
-		m.syncViewport()
-		return m, nil
-	case bot.StreamDoneMsg:
-		if chatPage, ok := m.pages[pageChat].(*chat.Page); ok {
-			chatPage.FinishStream()
-		}
-		m.stream = nil
-		m.syncViewport()
-		return m, nil
+		return m, waitEventCmd(m.events)
 	}
 
 	var cmd tea.Cmd
@@ -362,6 +369,30 @@ func (m *Model) syncViewport() {
 	m.viewport.GotoTop()
 }
 
+func (m *Model) handleEvent(event any) {
+	chatPage, ok := m.pages[pageChat].(*chat.Page)
+	if !ok {
+		return
+	}
+
+	switch e := event.(type) {
+	case events.ChatStreamStarted:
+		chatPage.BeginAssistantStream(e.RequestID)
+	case events.ChatStreamChunk:
+		if chatPage.HasActiveStream(e.RequestID) {
+			chatPage.AppendStream(e.Chunk)
+		}
+	case events.ChatStreamFailed:
+		if chatPage.HasActiveStream(e.RequestID) {
+			chatPage.FailStream(e.Err)
+		}
+	case events.ChatStreamCompleted:
+		if chatPage.HasActiveStream(e.RequestID) {
+			chatPage.FinishStream()
+		}
+	}
+}
+
 func (m Model) renderHeader() string {
 	title := "Go CLI"
 	if page := m.currentPage(); page != nil {
@@ -397,4 +428,18 @@ func max(a, b int) int {
 		return a
 	}
 	return b
+}
+
+type eventMsg struct {
+	event any
+}
+
+func waitEventCmd(events <-chan any) tea.Cmd {
+	return func() tea.Msg {
+		event, ok := <-events
+		if !ok {
+			return nil
+		}
+		return eventMsg{event: event}
+	}
 }
