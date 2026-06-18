@@ -9,6 +9,7 @@ func Build(model config.ModelConfig) []react.Tool {
 	return []react.Tool{
 		TimeNow{},
 		ActiveModel{Model: model},
+		ReadFile{},
 	}
 }
 

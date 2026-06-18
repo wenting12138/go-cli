@@ -2,6 +2,7 @@ package react
 
 import (
 	"fmt"
+	"math"
 	"sort"
 )
 
@@ -175,6 +176,10 @@ func isInteger(value any) bool {
 		return true
 	case uint, uint8, uint16, uint32, uint64:
 		return true
+	case float32:
+		return math.Mod(float64(value.(float32)), 1) == 0
+	case float64:
+		return math.Mod(value.(float64), 1) == 0
 	default:
 		return false
 	}
