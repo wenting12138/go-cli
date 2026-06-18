@@ -416,7 +416,8 @@ func startupLogo() string {
 }
 
 func needsReplyDivider(prev, current chatui.Message) bool {
-	return prev.Type == chatui.TypeUser && current.Type == chatui.TypeAssistant
+	return (prev.Type == chatui.TypeUser && current.Type == chatui.TypeAssistant) ||
+		(prev.Type == chatui.TypeAssistant && current.Type == chatui.TypeUser)
 }
 
 func renderReplyDivider(width int) string {
