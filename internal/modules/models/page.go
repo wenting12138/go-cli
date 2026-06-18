@@ -19,7 +19,7 @@ func (i item) Title() string {
 }
 
 func (i item) Description() string {
-	return fmt.Sprintf("id=%s  context=%d  max_tokens=%d", i.model.ID, i.model.ContextWindow, i.model.MaxTokens)
+	return fmt.Sprintf("id=%s  context=%s", i.model.ID, formatContextWindow(i.model.ContextWindow))
 }
 
 func (i item) FilterValue() string {
@@ -112,4 +112,11 @@ func (p *Page) SelectedModelID() string {
 		return ""
 	}
 	return selected.model.ID
+}
+
+func formatContextWindow(size int) string {
+	if size%1000 == 0 {
+		return fmt.Sprintf("%dk", size/1000)
+	}
+	return fmt.Sprintf("%.1fk", float64(size)/1000)
 }

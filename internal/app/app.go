@@ -420,10 +420,19 @@ func (m *Model) handleEvent(event any) {
 
 	switch e := event.(type) {
 	case events.ChatStreamStarted:
+	case events.ChatResponseStarted:
 		chatPage.BeginAssistantStream(e.RequestID)
 	case events.ChatStreamChunk:
 		if chatPage.HasActiveStream(e.RequestID) {
 			chatPage.AppendStream(e.Chunk)
+		}
+	case events.ChatToolCallStarted:
+		if chatPage.HasActiveStream(e.RequestID) {
+			chatPage.AppendToolCall(e.ToolCallID, e.Tool, e.Args)
+		}
+	case events.ChatToolCallCompleted:
+		if chatPage.HasActiveStream(e.RequestID) {
+			chatPage.AppendToolResult(e.ToolCallID, e.Tool, e.Result)
 		}
 	case events.ChatStreamFailed:
 		if chatPage.HasActiveStream(e.RequestID) {

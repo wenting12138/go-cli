@@ -1,6 +1,7 @@
 package chat
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -23,6 +24,14 @@ var (
 			Bold(true)
 	systemStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("244"))
+	toolLabelStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("220")).
+			Bold(true)
+	toolBodyStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("252")).
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("240")).
+			Padding(0, 1)
 )
 
 type Page struct {
@@ -37,8 +46,8 @@ func NewPage(model config.ModelConfig) *Page {
 		model:       model,
 		streamIndex: -1,
 		messages: []domain.Message{
-			{Role: "system", Content: "Chat CLI ready. Type a message or use /resume or /models."},
-			{Role: "assistant", Content: fmt.Sprintf("This is the main conversation page. Active model: %s/%s, context=%d, max_tokens=%d. Use /resume to open the session recovery page.", model.Provider, model.Name, model.ContextWindow, model.MaxTokens)},
+			domain.TextMessage("system", "Chat CLI ready. Type a message or use /resume or /models."),
+			domain.TextMessage("assistant", fmt.Sprintf("This is the main conversation page. Active model: %s/%s, context=%s. Use /resume to open the session recovery page.", model.Provider, model.Name, formatContextWindow(model.ContextWindow))),
 		},
 	}
 }
@@ -60,7 +69,7 @@ func (p *Page) Content(width int) string {
 }
 
 func (p *Page) HandleInput(text string) tea.Cmd {
-	p.messages = append(p.messages, domain.Message{Role: "user", Content: text})
+	p.messages = append(p.messages, domain.TextMessage("user", text))
 	return nil
 }
 
@@ -73,12 +82,12 @@ func (p *Page) ApplyUpdate(msg shared.PageUpdatedMsg) {
 }
 
 func (p *Page) SystemMessage(text string) {
-	p.messages = append(p.messages, domain.Message{Role: "system", Content: text})
+	p.messages = append(p.messages, domain.TextMessage("system", text))
 }
 
 func (p *Page) LoadSession(session domain.Session) {
 	p.messages = append([]domain.Message{
-		{Role: "system", Content: fmt.Sprintf("Resumed session %s: %s", session.ID, session.Title)},
+		domain.TextMessage("system", fmt.Sprintf("Resumed session %s: %s", session.ID, session.Title)),
 	}, session.Messages...)
 }
 
@@ -86,7 +95,8 @@ func (p *Page) SetModel(model config.ModelConfig) {
 	p.model = model
 	p.messages = append(p.messages, domain.Message{
 		Role:    "system",
-		Content: fmt.Sprintf("Switched model to %s (%s/%s), context=%d, max_tokens=%d.", model.ID, model.Provider, model.Name, model.ContextWindow, model.MaxTokens),
+		Type:    domain.MessageTypeText,
+		Content: fmt.Sprintf("Switched model to %s (%s/%s), context=%s.", model.ID, model.Provider, model.Name, formatContextWindow(model.ContextWindow)),
 	})
 }
 
@@ -116,6 +126,7 @@ func (p *Page) FailStream(err string) {
 	p.streamRequestID = ""
 	p.messages = append(p.messages, domain.Message{
 		Role:    "system",
+		Type:    domain.MessageTypeText,
 		Content: err,
 	})
 }
@@ -125,7 +136,7 @@ func (p *Page) SnapshotMessages() []domain.Message {
 }
 
 func (p *Page) BeginAssistantStream(requestID string) {
-	p.messages = append(p.messages, domain.Message{Role: "assistant", Content: ""})
+	p.messages = append(p.messages, domain.TextMessage("assistant", ""))
 	p.streamIndex = len(p.messages) - 1
 	p.streamRequestID = requestID
 }
@@ -142,7 +153,22 @@ func (p *Page) ActiveRequestID() string {
 	return p.streamRequestID
 }
 
+func (p *Page) AppendToolCall(toolCallID, toolName string, args map[string]any) {
+	p.messages = append(p.messages, domain.ToolCallMessage(toolCallID, toolName, args))
+}
+
+func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
+	p.messages = append(p.messages, domain.ToolResultMessage(toolCallID, toolName, result))
+}
+
 func renderMessage(width int, message domain.Message) string {
+	switch message.Type {
+	case domain.MessageTypeToolCall:
+		return renderToolCall(width, message)
+	case domain.MessageTypeToolResult:
+		return renderToolResult(width, message)
+	}
+
 	label := systemStyle.Render("system")
 	switch message.Role {
 	case "user":
@@ -158,9 +184,53 @@ func renderMessage(width int, message domain.Message) string {
 	return fmt.Sprintf("%s\n%s", label, content)
 }
 
+func renderToolCall(width int, message domain.Message) string {
+	body := []string{
+		fmt.Sprintf("name: %s", message.ToolName),
+		fmt.Sprintf("id: %s", message.ToolCallID),
+		fmt.Sprintf("args: %s", formatArgs(message.Args)),
+	}
+	return fmt.Sprintf(
+		"%s\n%s",
+		toolLabelStyle.Render("tool call"),
+		toolBodyStyle.Width(max(20, width)).Render(strings.Join(body, "\n")),
+	)
+}
+
+func renderToolResult(width int, message domain.Message) string {
+	body := []string{
+		fmt.Sprintf("name: %s", message.ToolName),
+		fmt.Sprintf("id: %s", message.ToolCallID),
+		fmt.Sprintf("result: %s", message.Result),
+	}
+	return fmt.Sprintf(
+		"%s\n%s",
+		toolLabelStyle.Render("tool result"),
+		toolBodyStyle.Width(max(20, width)).Render(strings.Join(body, "\n")),
+	)
+}
+
 func max(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
+}
+
+func formatContextWindow(size int) string {
+	if size%1000 == 0 {
+		return fmt.Sprintf("%dk", size/1000)
+	}
+	return fmt.Sprintf("%.1fk", float64(size)/1000)
+}
+
+func formatArgs(args map[string]any) string {
+	if len(args) == 0 {
+		return "{}"
+	}
+	data, err := json.Marshal(args)
+	if err != nil {
+		return "{}"
+	}
+	return string(data)
 }

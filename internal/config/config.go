@@ -25,7 +25,6 @@ type ModelConfig struct {
 	BaseURL       string `json:"base_url"`
 	APIKey        string `json:"api_key"`
 	ContextWindow int    `json:"context_window"`
-	MaxTokens     int    `json:"max_tokens"`
 }
 
 type State struct {
@@ -111,7 +110,6 @@ func defaultConfig() Config {
 				BaseURL:       "https://api.openai.com/v1",
 				APIKey:        "",
 				ContextWindow: 128000,
-				MaxTokens:     2048,
 			},
 			{
 				ID:            "openai-gpt-4.1",
@@ -120,7 +118,6 @@ func defaultConfig() Config {
 				BaseURL:       "https://api.openai.com/v1",
 				APIKey:        "",
 				ContextWindow: 128000,
-				MaxTokens:     4096,
 			},
 			{
 				ID:            "ollama-qwen3",
@@ -129,7 +126,6 @@ func defaultConfig() Config {
 				BaseURL:       "http://localhost:11434",
 				APIKey:        "",
 				ContextWindow: 32000,
-				MaxTokens:     2048,
 			},
 		},
 	}
@@ -199,9 +195,6 @@ func validate(cfg Config) error {
 		}
 		if model.ContextWindow <= 0 {
 			return fmt.Errorf("config file model %q has invalid context_window", model.ID)
-		}
-		if model.MaxTokens <= 0 {
-			return fmt.Errorf("config file model %q has invalid max_tokens", model.ID)
 		}
 	}
 	if !currentFound {

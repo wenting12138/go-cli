@@ -1,0 +1,41 @@
+package tools
+
+import (
+	"context"
+	"fmt"
+
+	"go-cli/internal/config"
+)
+
+type ActiveModel struct {
+	Model config.ModelConfig
+}
+
+func (t ActiveModel) Name() string {
+	return "active_model"
+}
+
+func (t ActiveModel) Description() string {
+	return "Returns the current model id, provider, model name, and context window."
+}
+
+func (t ActiveModel) Parameters() map[string]any {
+	return map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+	}
+}
+
+func (t ActiveModel) ValidateArgs(args map[string]any) error {
+	return nil
+}
+
+func (t ActiveModel) Run(ctx context.Context, args map[string]any) (string, error) {
+	return fmt.Sprintf(
+		"id=%s provider=%s name=%s context_window=%d",
+		t.Model.ID,
+		t.Model.Provider,
+		t.Model.Name,
+		t.Model.ContextWindow,
+	), nil
+}

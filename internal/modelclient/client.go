@@ -8,11 +8,11 @@ import (
 	"go-cli/internal/config"
 	"go-cli/internal/modelclient/ollama"
 	"go-cli/internal/modelclient/openai"
-	"go-cli/internal/modules/chat/domain"
+	"go-cli/internal/modelclient/protocol"
 )
 
 type Client interface {
-	StreamChat(ctx context.Context, messages []domain.Message, onChunk func(string) error) error
+	StreamChat(ctx context.Context, request protocol.ChatRequest, onEvent func(protocol.Event) error) error
 }
 
 func New(model config.ModelConfig) (Client, error) {

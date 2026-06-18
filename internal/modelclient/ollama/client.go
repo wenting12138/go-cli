@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"go-cli/internal/config"
+	"go-cli/internal/modelclient/protocol"
 	"go-cli/internal/modules/chat/domain"
 )
 
@@ -22,17 +23,35 @@ type Client struct {
 type request struct {
 	Model    string    `json:"model"`
 	Messages []message `json:"messages"`
+	Tools    []tool    `json:"tools,omitempty"`
 	Stream   bool      `json:"stream"`
-	Options  options   `json:"options,omitempty"`
-}
-
-type options struct {
-	NumPredict int `json:"num_predict,omitempty"`
 }
 
 type message struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role      string            `json:"role"`
+	Content   string            `json:"content,omitempty"`
+	ToolCalls []messageToolCall `json:"tool_calls,omitempty"`
+	Name      string            `json:"name,omitempty"`
+}
+
+type tool struct {
+	Type     string       `json:"type"`
+	Function functionSpec `json:"function"`
+}
+
+type functionSpec struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+}
+
+type messageToolCall struct {
+	Function toolFunction `json:"function"`
+}
+
+type toolFunction struct {
+	Name      string         `json:"name"`
+	Arguments map[string]any `json:"arguments,omitempty"`
 }
 
 type response struct {
@@ -47,14 +66,12 @@ func New(model config.ModelConfig) *Client {
 	}
 }
 
-func (c *Client) StreamChat(ctx context.Context, messages []domain.Message, onChunk func(string) error) error {
+func (c *Client) StreamChat(ctx context.Context, chatRequest protocol.ChatRequest, onEvent func(protocol.Event) error) error {
 	payload := request{
 		Model:    c.model.Name,
-		Messages: toMessages(messages),
+		Messages: toMessages(chatRequest.Messages),
+		Tools:    toTools(chatRequest.Tools),
 		Stream:   true,
-		Options: options{
-			NumPredict: c.model.MaxTokens,
-		},
 	}
 
 	body, err := json.Marshal(payload)
@@ -99,11 +116,30 @@ func (c *Client) StreamChat(ctx context.Context, messages []domain.Message, onCh
 		if parsed.Error != "" {
 			return fmt.Errorf("ollama error: %s", parsed.Error)
 		}
-		if parsed.Message.Content == "" {
-			continue
+
+		if parsed.Message.Content != "" {
+			if err := onEvent(protocol.Event{
+				Type: protocol.EventTypeTextDelta,
+				Text: parsed.Message.Content,
+			}); err != nil {
+				return err
+			}
 		}
-		if err := onChunk(parsed.Message.Content); err != nil {
-			return err
+
+		for index, toolCall := range parsed.Message.ToolCalls {
+			if toolCall.Function.Name == "" {
+				return fmt.Errorf("ollama returned incomplete tool call at index %d", index)
+			}
+			if err := onEvent(protocol.Event{
+				Type: protocol.EventTypeToolCall,
+				ToolCall: protocol.ToolCall{
+					ID:        fmt.Sprintf("call-%d", index+1),
+					Name:      toolCall.Function.Name,
+					Arguments: cloneMap(toolCall.Function.Arguments),
+				},
+			}); err != nil {
+				return err
+			}
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -115,19 +151,57 @@ func (c *Client) StreamChat(ctx context.Context, messages []domain.Message, onCh
 func toMessages(messages []domain.Message) []message {
 	out := make([]message, 0, len(messages))
 	for _, entry := range messages {
-		out = append(out, message{
-			Role:    normalizeRole(entry.Role),
-			Content: entry.Content,
+		switch entry.Type {
+		case domain.MessageTypeToolCall:
+			out = append(out, message{
+				Role: "assistant",
+				ToolCalls: []messageToolCall{
+					{
+						Function: toolFunction{
+							Name:      entry.ToolName,
+							Arguments: cloneMap(entry.Args),
+						},
+					},
+				},
+			})
+		case domain.MessageTypeToolResult:
+			out = append(out, message{
+				Role:    "tool",
+				Content: entry.Result,
+				Name:    entry.ToolName,
+			})
+		default:
+			out = append(out, message{
+				Role:    entry.ModelRole(),
+				Content: entry.Content,
+			})
+		}
+	}
+	return out
+}
+
+func toTools(definitions []protocol.ToolDefinition) []tool {
+	out := make([]tool, 0, len(definitions))
+	for _, definition := range definitions {
+		out = append(out, tool{
+			Type: "function",
+			Function: functionSpec{
+				Name:        definition.Name,
+				Description: definition.Description,
+				Parameters:  cloneMap(definition.Parameters),
+			},
 		})
 	}
 	return out
 }
 
-func normalizeRole(role string) string {
-	switch role {
-	case "assistant", "user", "system":
-		return role
-	default:
-		return "user"
+func cloneMap(input map[string]any) map[string]any {
+	if len(input) == 0 {
+		return map[string]any{}
 	}
+	cloned := make(map[string]any, len(input))
+	for key, value := range input {
+		cloned[key] = value
+	}
+	return cloned
 }
