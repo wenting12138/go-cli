@@ -19,13 +19,14 @@ func (t TimeNow) Description() string {
 
 func (t TimeNow) Parameters() react.ParameterSchema {
 	return react.ParameterSchema{
-		Type:       "object",
-		Properties: map[string]react.ParameterSchema{},
+		Type:                 "object",
+		Properties:           map[string]react.ParameterSchema{},
+		AdditionalProperties: false,
 	}
 }
 
 func (t TimeNow) ValidateArgs(args map[string]any) error {
-	return nil
+	return t.Parameters().Validate(args)
 }
 
 func (t TimeNow) Run(ctx context.Context, args map[string]any) (string, error) {

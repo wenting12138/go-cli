@@ -22,13 +22,14 @@ func (t ActiveModel) Description() string {
 
 func (t ActiveModel) Parameters() react.ParameterSchema {
 	return react.ParameterSchema{
-		Type:       "object",
-		Properties: map[string]react.ParameterSchema{},
+		Type:                 "object",
+		Properties:           map[string]react.ParameterSchema{},
+		AdditionalProperties: false,
 	}
 }
 
 func (t ActiveModel) ValidateArgs(args map[string]any) error {
-	return nil
+	return t.Parameters().Validate(args)
 }
 
 func (t ActiveModel) Run(ctx context.Context, args map[string]any) (string, error) {
