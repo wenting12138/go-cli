@@ -3,6 +3,7 @@ package chat
 import (
 	"context"
 	"fmt"
+	"os"
 	"time"
 
 	"go-cli/internal/agent/react"
@@ -12,14 +13,19 @@ import (
 	"go-cli/internal/events"
 	"go-cli/internal/modelclient"
 	"go-cli/internal/modules/chat/domain"
+	"go-cli/internal/prompt"
 )
 
 type Service struct {
-	bus *eventbus.Bus
+	bus           *eventbus.Bus
+	promptBuilder *prompt.Builder
 }
 
 func New(bus *eventbus.Bus) *Service {
-	return &Service{bus: bus}
+	return &Service{
+		bus:           bus,
+		promptBuilder: prompt.NewBuilder(),
+	}
 }
 
 func (s *Service) StartStream(model config.ModelConfig, messages []domain.Message) error {
@@ -27,7 +33,7 @@ func (s *Service) StartStream(model config.ModelConfig, messages []domain.Messag
 	if err != nil {
 		return err
 	}
-	agent := react.New(client, tools.Build(model))
+	agent := react.New(client, model, tools.Build(model), s.promptBuilder)
 
 	requestID := fmt.Sprintf("chat-%d", time.Now().UnixNano())
 	s.bus.Publish(events.ChatStreamStarted{RequestID: requestID})
@@ -75,6 +81,18 @@ func (s *Service) StartStream(model config.ModelConfig, messages []domain.Messag
 	}()
 
 	return nil
+}
+
+func (s *Service) BuildSystemPrompt(model config.ModelConfig) (string, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve working directory: %w", err)
+	}
+	return s.promptBuilder.Build(prompt.Input{
+		Model:      model,
+		WorkingDir: workingDir,
+		Tools:      react.ToolDefinitions(tools.Build(model)),
+	})
 }
 
 func cloneArgs(args map[string]any) map[string]any {

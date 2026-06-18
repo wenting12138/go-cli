@@ -203,7 +203,6 @@ func (m Model) handleChatInput(text string) (tea.Model, tea.Cmd) {
 	}
 
 	chatPage.HandleInput(text)
-	m.persistActiveChat()
 	messages := chatPage.SnapshotMessages()
 	activeModel, err := m.config.ActiveModel()
 	if err != nil {
@@ -211,6 +210,11 @@ func (m Model) handleChatInput(text string) (tea.Model, tea.Cmd) {
 		m.syncViewport()
 		return m, nil
 	}
+	systemPrompt, err := m.chatSvc.BuildSystemPrompt(activeModel)
+	if err == nil {
+		chatPage.SetSystemPrompt(systemPrompt)
+	}
+	m.persistActiveChat()
 	if err := m.chatSvc.StartStream(activeModel, messages); err != nil {
 		chatPage.FailStream(fmt.Sprintf("model request failed: %s", err))
 		m.syncViewport()
@@ -333,6 +337,7 @@ func (m *Model) handleResumeByID(id string) (tea.Model, tea.Cmd) {
 	}
 
 	chatPage.RestoreSession(session.ID, session.Title, session.UIMessages, session.ModelMessages)
+	chatPage.SetSystemPrompt(session.SystemPrompt)
 	resumePage.MarkResumed(session.ID)
 	m.current = pageChat
 	m.input.Placeholder = m.currentPage().Placeholder()
@@ -393,6 +398,7 @@ func (m *Model) persistActiveChat() {
 		ID:            chatPage.SessionID(),
 		Title:         chatPage.SessionTitle(),
 		UIMessages:    chatPage.UISnapshotMessages(),
+		SystemPrompt:  chatPage.SystemPrompt(),
 		ModelMessages: chatPage.SnapshotMessages(),
 		UpdatedAt:     time.Now(),
 	})

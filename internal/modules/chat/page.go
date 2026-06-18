@@ -46,6 +46,7 @@ var (
 
 type Page struct {
 	messages         []chatui.Message
+	systemPrompt     string
 	modelMessages    []domain.Message
 	model            config.ModelConfig
 	sessionID        string
@@ -143,6 +144,14 @@ func (p *Page) RestoreSession(sessionID, title string, uiMessages []chatui.Messa
 	p.modelStreamIndex = -1
 	p.streamRequestID = ""
 	p.markDirty()
+}
+
+func (p *Page) SetSystemPrompt(systemPrompt string) {
+	p.systemPrompt = strings.TrimSpace(systemPrompt)
+}
+
+func (p *Page) SystemPrompt() string {
+	return p.systemPrompt
 }
 
 func (p *Page) SetModel(model config.ModelConfig) {

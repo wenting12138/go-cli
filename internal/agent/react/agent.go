@@ -3,12 +3,15 @@ package react
 import (
 	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
+	"go-cli/internal/config"
 	"go-cli/internal/modelclient"
 	"go-cli/internal/modelclient/protocol"
 	"go-cli/internal/modules/chat/domain"
+	"go-cli/internal/prompt"
 )
 
 type Tool interface {
@@ -27,9 +30,11 @@ type Hooks struct {
 }
 
 type Agent struct {
-	client   modelclient.Client
-	tools    map[string]Tool
-	maxSteps int
+	client        modelclient.Client
+	model         config.ModelConfig
+	tools         map[string]Tool
+	promptBuilder *prompt.Builder
+	maxSteps      int
 }
 
 type collectResult struct {
@@ -37,22 +42,31 @@ type collectResult struct {
 	ToolCalls  []protocol.ToolCall
 }
 
-func New(client modelclient.Client, tools []Tool) *Agent {
+func New(client modelclient.Client, model config.ModelConfig, tools []Tool, promptBuilder *prompt.Builder) *Agent {
 	indexed := make(map[string]Tool, len(tools))
 	for _, tool := range tools {
 		indexed[tool.Name()] = tool
 	}
+	if promptBuilder == nil {
+		promptBuilder = prompt.NewBuilder()
+	}
 
 	return &Agent{
-		client:   client,
-		tools:    indexed,
-		maxSteps: 100,
+		client:        client,
+		model:         model,
+		tools:         indexed,
+		promptBuilder: promptBuilder,
+		maxSteps:      100,
 	}
 }
 
 func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) error {
+	systemPrompt, err := a.systemPrompt()
+	if err != nil {
+		return err
+	}
 	messages := append([]domain.Message{
-		domain.TextMessage("system", a.systemPrompt()),
+		domain.TextMessage("system", systemPrompt),
 	}, history...)
 
 	for step := 0; step < a.maxSteps; step++ {
@@ -168,22 +182,41 @@ func (a *Agent) collect(ctx context.Context, messages []domain.Message, onTextCh
 	return result, nil
 }
 
-func (a *Agent) systemPrompt() string {
-	return strings.TrimSpace(`You are a helpful CLI assistant.
-Use the available tools when they are needed.
-Keep answers concise and useful.`)
+func (a *Agent) systemPrompt() (string, error) {
+	workingDir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("resolve working directory: %w", err)
+	}
+	return a.promptBuilder.Build(prompt.Input{
+		Model:      a.model,
+		WorkingDir: workingDir,
+		Tools:      a.toolDefinitions(),
+	})
 }
 
 func (a *Agent) toolDefinitions() []protocol.ToolDefinition {
-	names := make([]string, 0, len(a.tools))
-	for name := range a.tools {
+	return ToolDefinitions(mapsToSlice(a.tools))
+}
+
+func ToolDefinitions(tools []Tool) []protocol.ToolDefinition {
+	indexed := make(map[string]Tool, len(tools))
+	for _, tool := range tools {
+		indexed[tool.Name()] = tool
+	}
+
+	return toolDefinitionsFromMap(indexed)
+}
+
+func toolDefinitionsFromMap(tools map[string]Tool) []protocol.ToolDefinition {
+	names := make([]string, 0, len(tools))
+	for name := range tools {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 
 	definitions := make([]protocol.ToolDefinition, 0, len(names))
 	for _, name := range names {
-		tool := a.tools[name]
+		tool := tools[name]
 		definitions = append(definitions, protocol.ToolDefinition{
 			Name:        tool.Name(),
 			Description: tool.Description(),
@@ -191,6 +224,20 @@ func (a *Agent) toolDefinitions() []protocol.ToolDefinition {
 		})
 	}
 	return definitions
+}
+
+func mapsToSlice(indexed map[string]Tool) []Tool {
+	names := make([]string, 0, len(indexed))
+	for name := range indexed {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	out := make([]Tool, 0, len(names))
+	for _, name := range names {
+		out = append(out, indexed[name])
+	}
+	return out
 }
 
 func cloneArgs(args map[string]any) map[string]any {

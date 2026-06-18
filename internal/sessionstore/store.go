@@ -31,6 +31,7 @@ type SessionData struct {
 	ID            string
 	Title         string
 	UIMessages    []ui.Message
+	SystemPrompt  string
 	ModelMessages []domain.Message
 	UpdatedAt     time.Time
 }
@@ -47,10 +48,11 @@ type uiFile struct {
 }
 
 type modelFile struct {
-	ID        string           `json:"id"`
-	Title     string           `json:"title"`
-	UpdatedAt time.Time        `json:"updated_at"`
-	Messages  []domain.Message `json:"messages"`
+	ID           string           `json:"id"`
+	Title        string           `json:"title"`
+	UpdatedAt    time.Time        `json:"updated_at"`
+	SystemPrompt string           `json:"system_prompt,omitempty"`
+	Messages     []domain.Message `json:"messages"`
 }
 
 func New() (*Store, error) {
@@ -86,10 +88,11 @@ func (s *Store) Save(data SessionData) error {
 		Messages:  ui.CloneMessages(data.UIMessages),
 	}
 	modelPayload := modelFile{
-		ID:        data.ID,
-		Title:     data.Title,
-		UpdatedAt: data.UpdatedAt,
-		Messages:  cloneMessages(data.ModelMessages),
+		ID:           data.ID,
+		Title:        data.Title,
+		UpdatedAt:    data.UpdatedAt,
+		SystemPrompt: data.SystemPrompt,
+		Messages:     cloneMessages(data.ModelMessages),
 	}
 
 	if err := writeJSON(filepath.Join(dir, uiFileName), uiPayload); err != nil {
@@ -118,6 +121,7 @@ func (s *Store) Load(sessionID string) (SessionData, error) {
 		ID:            uiPayload.ID,
 		Title:         uiPayload.Title,
 		UIMessages:    ui.CloneMessages(uiPayload.Messages),
+		SystemPrompt:  modelPayload.SystemPrompt,
 		ModelMessages: cloneMessages(modelPayload.Messages),
 		UpdatedAt:     uiPayload.UpdatedAt,
 	}, nil
