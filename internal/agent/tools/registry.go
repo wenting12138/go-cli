@@ -10,6 +10,10 @@ func Build(model config.ModelConfig) []react.Tool {
 		TimeNow{},
 		ActiveModel{Model: model},
 		ReadFile{},
+		GrepFiles{},
+		ExecuteShellCommand{},
+		WriteTextFile{},
+		EditFileLines{},
 	}
 }
 
