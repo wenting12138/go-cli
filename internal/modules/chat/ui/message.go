@@ -9,6 +9,7 @@ const (
 	TypeSystem    = "system"
 	TypeUser      = "user"
 	TypeAssistant = "assistant"
+	TypeThinking  = "thinking"
 	TypeTool      = "tool"
 )
 

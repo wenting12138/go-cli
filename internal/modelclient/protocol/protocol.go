@@ -5,8 +5,10 @@ import "go-cli/internal/modules/chat/domain"
 type EventType string
 
 const (
-	EventTypeTextDelta EventType = "text_delta"
-	EventTypeToolCall  EventType = "tool_call"
+	EventTypeTextDelta        EventType = "text_delta"
+	EventTypeThinkingDelta    EventType = "thinking_delta"
+	EventTypeRedactedThinking EventType = "redacted_thinking"
+	EventTypeToolCall         EventType = "tool_call"
 )
 
 type ToolDefinition struct {

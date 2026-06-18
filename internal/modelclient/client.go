@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"go-cli/internal/config"
+	"go-cli/internal/modelclient/anthropic"
 	"go-cli/internal/modelclient/ollama"
 	"go-cli/internal/modelclient/openai"
 	"go-cli/internal/modelclient/protocol"
@@ -19,6 +20,8 @@ func New(model config.ModelConfig) (Client, error) {
 	switch strings.ToLower(model.Provider) {
 	case "openai", "openai-compatible":
 		return openai.New(model), nil
+	case "anthropic":
+		return anthropic.New(model), nil
 	case "ollama":
 		return ollama.New(model), nil
 	default:

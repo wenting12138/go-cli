@@ -414,6 +414,16 @@ func (m *Model) handleEvent(event any) {
 	switch e := event.(type) {
 	case events.ChatStreamStarted:
 		chatPage.BeginRequest(e.RequestID)
+	case events.ChatThinkingStarted:
+		if chatPage.HasActiveRequest(e.RequestID) {
+			chatPage.BeginThinking(e.RequestID)
+			m.persistActiveChat()
+		}
+	case events.ChatThinkingChunk:
+		if chatPage.HasActiveRequest(e.RequestID) {
+			chatPage.AppendThinking(e.Chunk)
+			m.persistActiveChat()
+		}
 	case events.ChatResponseStarted:
 		chatPage.BeginAssistantStream(e.RequestID)
 	case events.ChatStreamChunk:

@@ -29,6 +29,19 @@ var (
 			BorderForeground(lipgloss.Color("63")).
 			PaddingLeft(1).
 			PaddingLeft(1)
+	thinkingStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244")).
+			BorderLeft(true).
+			BorderForeground(lipgloss.Color("244")).
+			PaddingLeft(1)
+	thinkingBoxStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("248")).
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("241")).
+				Padding(0, 1)
+	thinkingTitleStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("246")).
+				Bold(true)
 	systemStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("245")).
 			BorderLeft(true).
@@ -51,6 +64,7 @@ type Page struct {
 	model            config.ModelConfig
 	sessionID        string
 	streamIndex      int
+	thinkingIndex    int
 	modelStreamIndex int
 	streamRequestID  string
 	cachedWidth      int
@@ -64,6 +78,7 @@ func NewPage(model config.ModelConfig) *Page {
 	return &Page{
 		model:            model,
 		streamIndex:      -1,
+		thinkingIndex:    -1,
 		modelStreamIndex: -1,
 		dirty:            true,
 		messages: []chatui.Message{
@@ -141,6 +156,7 @@ func (p *Page) RestoreSession(sessionID, title string, uiMessages []chatui.Messa
 	}, chatui.CloneMessages(uiMessages)...)
 	p.modelMessages = cloneMessages(modelMessages)
 	p.streamIndex = -1
+	p.thinkingIndex = -1
 	p.modelStreamIndex = -1
 	p.streamRequestID = ""
 	p.markDirty()
@@ -172,8 +188,12 @@ func (p *Page) AppendStream(chunk string) {
 }
 
 func (p *Page) FinishStream() {
+	if p.thinkingIndex >= 0 && p.thinkingIndex < len(p.messages) {
+		p.messages[p.thinkingIndex].Content = strings.TrimSpace(p.messages[p.thinkingIndex].Content)
+	}
 	if p.streamIndex < 0 || p.streamIndex >= len(p.messages) {
 		p.streamIndex = -1
+		p.thinkingIndex = -1
 		p.modelStreamIndex = -1
 		p.streamRequestID = ""
 		return
@@ -183,16 +203,24 @@ func (p *Page) FinishStream() {
 		p.modelMessages[p.modelStreamIndex].Content = strings.TrimSpace(p.modelMessages[p.modelStreamIndex].Content)
 	}
 	p.streamIndex = -1
+	p.thinkingIndex = -1
 	p.modelStreamIndex = -1
 	p.streamRequestID = ""
 	p.markDirty()
 }
 
 func (p *Page) FailStream(err string) {
+	if p.thinkingIndex >= 0 && p.thinkingIndex < len(p.messages) && strings.TrimSpace(p.messages[p.thinkingIndex].Content) == "" {
+		p.messages = append(p.messages[:p.thinkingIndex], p.messages[p.thinkingIndex+1:]...)
+		if p.streamIndex > p.thinkingIndex {
+			p.streamIndex--
+		}
+	}
 	if p.streamIndex >= 0 && p.streamIndex < len(p.messages) && p.messages[p.streamIndex].Content == "" {
 		p.messages = append(p.messages[:p.streamIndex], p.messages[p.streamIndex+1:]...)
 	}
 	p.streamIndex = -1
+	p.thinkingIndex = -1
 	p.modelStreamIndex = -1
 	p.streamRequestID = ""
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, err))
@@ -210,6 +238,7 @@ func (p *Page) UISnapshotMessages() []chatui.Message {
 func (p *Page) BeginRequest(requestID string) {
 	p.streamRequestID = requestID
 	p.streamIndex = -1
+	p.thinkingIndex = -1
 }
 
 func (p *Page) BeginAssistantStream(requestID string) {
@@ -222,6 +251,28 @@ func (p *Page) BeginAssistantStream(requestID string) {
 	p.streamIndex = len(p.messages) - 1
 	p.modelStreamIndex = len(p.modelMessages) - 1
 	p.streamRequestID = requestID
+	p.markDirty()
+}
+
+func (p *Page) BeginThinking(requestID string) {
+	if p.streamRequestID == "" {
+		p.streamRequestID = requestID
+	}
+	if p.thinkingIndex >= 0 && p.thinkingIndex < len(p.messages) {
+		return
+	}
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeThinking, ""))
+	p.frozenRendered = append(p.frozenRendered, "")
+	p.thinkingIndex = len(p.messages) - 1
+	p.streamRequestID = requestID
+	p.markDirty()
+}
+
+func (p *Page) AppendThinking(chunk string) {
+	if p.thinkingIndex < 0 || p.thinkingIndex >= len(p.messages) {
+		return
+	}
+	p.messages[p.thinkingIndex].Content += chunk
 	p.markDirty()
 }
 
@@ -263,6 +314,7 @@ func (p *Page) ApplyCompact(boundary, summary domain.Message, restoredFiles, pre
 	p.modelMessages = append([]domain.Message{boundary, summary}, cloneMessages(restoredFiles)...)
 	p.modelMessages = append(p.modelMessages, cloneMessages(preservedTail)...)
 	p.streamIndex = -1
+	p.thinkingIndex = -1
 	p.modelStreamIndex = -1
 	p.streamRequestID = ""
 	p.markDirty()
@@ -278,6 +330,13 @@ func (p *Page) renderMessage(width int, index int, message chatui.Message) strin
 			content = assistantStyle.Width(contentWidth - assistantStyle.GetHorizontalFrameSize()).Render(p.frozenRendered[index])
 		} else {
 			content = assistantStyle.Width(contentWidth - assistantStyle.GetHorizontalFrameSize()).Render(renderAssistantMarkdown(contentWidth, message.Content))
+		}
+	}
+	if message.Type == chatui.TypeThinking {
+		if index == p.thinkingIndex {
+			content = thinkingStyle.Width(max(1, contentWidth-thinkingStyle.GetHorizontalFrameSize())).Render(message.Content)
+		} else {
+			content = thinkingBoxStyle.Width(max(1, contentWidth-thinkingBoxStyle.GetHorizontalFrameSize())).Render(renderThinkingCollapsed(contentWidth, message.Content))
 		}
 	}
 	if message.Type == chatui.TypeTool {
@@ -348,6 +407,44 @@ func renderAssistantMarkdown(width int, content string) string {
 	}
 
 	return strings.TrimRight(out, "\n")
+}
+
+func renderThinkingCollapsed(width int, content string) string {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return thinkingTitleStyle.Render("Thinking")
+	}
+
+	lines := strings.Split(trimmed, "\n")
+	preview := make([]string, 0, 4)
+	preview = append(preview, thinkingTitleStyle.Render("Thinking"))
+
+	lineLimit := 3
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		preview = append(preview, line)
+		if len(preview) > lineLimit {
+			break
+		}
+	}
+
+	if len(preview) == 1 {
+		preview = append(preview, trimmed)
+	}
+
+	if len(preview) > lineLimit+1 {
+		preview = preview[:lineLimit+1]
+	}
+
+	if len(lines) > lineLimit {
+		preview = append(preview, lipgloss.NewStyle().Foreground(lipgloss.Color("240")).Render("..."))
+	}
+
+	body := strings.Join(preview, "\n")
+	return lipgloss.NewStyle().Width(max(1, width-thinkingBoxStyle.GetHorizontalFrameSize())).Render(body)
 }
 
 func (p *Page) SessionTitle() string {

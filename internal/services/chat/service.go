@@ -59,6 +59,15 @@ func (s *Service) StartStream(model config.ModelConfig, messages []domain.Messag
 					Result:     result,
 				})
 			},
+			OnThinkingStart: func() {
+				s.bus.Publish(events.ChatThinkingStarted{RequestID: requestID})
+			},
+			OnThinkingChunk: func(chunk string) {
+				s.bus.Publish(events.ChatThinkingChunk{
+					RequestID: requestID,
+					Chunk:     chunk,
+				})
+			},
 			OnFinalStart: func() {
 				s.bus.Publish(events.ChatResponseStarted{RequestID: requestID})
 			},

@@ -13,6 +13,15 @@ type ChatStreamChunk struct {
 	Chunk     string
 }
 
+type ChatThinkingStarted struct {
+	RequestID string
+}
+
+type ChatThinkingChunk struct {
+	RequestID string
+	Chunk     string
+}
+
 type ChatStreamFailed struct {
 	RequestID string
 	Err       string

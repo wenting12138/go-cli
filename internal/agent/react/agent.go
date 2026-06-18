@@ -23,10 +23,12 @@ type Tool interface {
 }
 
 type Hooks struct {
-	OnToolStart  func(name, toolCallID string, args map[string]any)
-	OnToolResult func(name, toolCallID, result string)
-	OnFinalStart func()
-	OnFinalChunk func(chunk string)
+	OnToolStart     func(name, toolCallID string, args map[string]any)
+	OnToolResult    func(name, toolCallID, result string)
+	OnThinkingStart func()
+	OnThinkingChunk func(chunk string)
+	OnFinalStart    func()
+	OnFinalChunk    func(chunk string)
 }
 
 type Agent struct {
@@ -71,7 +73,15 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 
 	for step := 0; step < a.maxSteps; step++ {
 		streamStarted := false
-		result, err := a.collect(ctx, messages, func(chunk string) {
+		result, err := a.collect(ctx, messages, func() {
+			if hooks.OnThinkingStart != nil {
+				hooks.OnThinkingStart()
+			}
+		}, func(chunk string) {
+			if hooks.OnThinkingChunk != nil {
+				hooks.OnThinkingChunk(chunk)
+			}
+		}, func(chunk string) {
 			if hooks.OnFinalStart != nil && !streamStarted {
 				hooks.OnFinalStart()
 				streamStarted = true
@@ -153,8 +163,9 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 	return fmt.Errorf("agent exceeded max steps without final answer")
 }
 
-func (a *Agent) collect(ctx context.Context, messages []domain.Message, onTextChunk func(string)) (collectResult, error) {
+func (a *Agent) collect(ctx context.Context, messages []domain.Message, onThinkingStart func(), onThinkingChunk func(string), onTextChunk func(string)) (collectResult, error) {
 	result := collectResult{}
+	thinkingStarted := false
 	request := protocol.ChatRequest{
 		Messages: messages,
 		Tools:    a.toolDefinitions(),
@@ -166,6 +177,14 @@ func (a *Agent) collect(ctx context.Context, messages []domain.Message, onTextCh
 			result.TextChunks = append(result.TextChunks, event.Text)
 			if onTextChunk != nil && event.Text != "" {
 				onTextChunk(event.Text)
+			}
+		case protocol.EventTypeThinkingDelta, protocol.EventTypeRedactedThinking:
+			if onThinkingStart != nil && !thinkingStarted {
+				onThinkingStart()
+				thinkingStarted = true
+			}
+			if onThinkingChunk != nil && event.Text != "" {
+				onThinkingChunk(event.Text)
 			}
 		case protocol.EventTypeToolCall:
 			result.ToolCalls = append(result.ToolCalls, protocol.ToolCall{
