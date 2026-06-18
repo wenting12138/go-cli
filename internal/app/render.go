@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"go-cli/internal/modules/chat"
 )
 
 func (m Model) View() string {
@@ -53,8 +55,13 @@ func (m Model) renderModelStatus() string {
 		return statusStyle.Render("model: unavailable")
 	}
 
+	sessionID := "-"
+	if chatPage, ok := m.pages[pageChat].(*chat.Page); ok && chatPage.SessionID() != "" {
+		sessionID = chatPage.SessionID()
+	}
+
 	return statusStyle.Render(
-		fmt.Sprintf("model: %s  context: %s  focus: %s", model.ID, formatContextWindow(model.ContextWindow), m.focus),
+		fmt.Sprintf("session: %s  model: %s  context: %s  focus: %s", sessionID, model.ID, formatContextWindow(model.ContextWindow), m.focus),
 	)
 }
 

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -37,6 +38,7 @@ var (
 type Page struct {
 	messages        []domain.Message
 	model           config.ModelConfig
+	sessionID       string
 	streamIndex     int
 	streamRequestID string
 }
@@ -69,6 +71,9 @@ func (p *Page) Content(width int) string {
 }
 
 func (p *Page) HandleInput(text string) tea.Cmd {
+	if p.sessionID == "" {
+		p.sessionID = fmt.Sprintf("session-%d", time.Now().UnixNano())
+	}
 	p.messages = append(p.messages, domain.TextMessage("user", text))
 	return nil
 }
@@ -86,6 +91,7 @@ func (p *Page) SystemMessage(text string) {
 }
 
 func (p *Page) LoadSession(session domain.Session) {
+	p.sessionID = session.ID
 	p.messages = append([]domain.Message{
 		domain.TextMessage("system", fmt.Sprintf("Resumed session %s: %s", session.ID, session.Title)),
 	}, session.Messages...)
@@ -163,6 +169,10 @@ func (p *Page) HasPendingStream() bool {
 
 func (p *Page) ActiveRequestID() string {
 	return p.streamRequestID
+}
+
+func (p *Page) SessionID() string {
+	return p.sessionID
 }
 
 func (p *Page) AppendToolCall(toolCallID, toolName string, args map[string]any) {
