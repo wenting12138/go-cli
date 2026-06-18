@@ -25,7 +25,7 @@ func (m Model) View() string {
 
 	sections = append(sections, m.renderBottomPanel())
 	sections = append(sections, m.renderModelStatus())
-	sections = append(sections, helpStyle.Render(m.help.View(m.keys)))
+	sections = append(sections, m.renderHelp())
 
 	body := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
@@ -50,9 +50,10 @@ func (m Model) renderViewport() string {
 }
 
 func (m Model) renderModelStatus() string {
+	width := m.contentWidth()
 	model, err := m.config.ActiveModel()
 	if err != nil {
-		return statusStyle.Render("model: unavailable")
+		return statusStyle.Width(width).Render("model: unavailable")
 	}
 
 	sessionID := "-"
@@ -60,9 +61,13 @@ func (m Model) renderModelStatus() string {
 		sessionID = chatPage.SessionID()
 	}
 
-	return statusStyle.Render(
+	return statusStyle.Width(width).Render(
 		fmt.Sprintf("session: %s  model: %s  context: %s  focus: %s", sessionID, model.ID, formatContextWindow(model.ContextWindow), m.focus),
 	)
+}
+
+func (m Model) renderHelp() string {
+	return helpStyle.Width(m.contentWidth()).Render(m.help.View(m.keys))
 }
 
 func (m Model) renderBottomPanel() string {
@@ -71,7 +76,7 @@ func (m Model) renderBottomPanel() string {
 	if m.focus != focusInput {
 		style = inactiveBoxStyle
 	}
-	return style.Width(width).Render(m.input.View())
+	return style.Width(max(1, width-style.GetHorizontalFrameSize())).Render(m.input.View())
 }
 
 func (m Model) renderSlashMenu() string {
@@ -98,7 +103,7 @@ func (m Model) renderSlashMenu() string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("240")).
 		Padding(0, 1).
-		Width(width).
+		Width(max(1, width-4)).
 		Render(strings.Join(lines, "\n"))
 }
 

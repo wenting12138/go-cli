@@ -112,6 +112,7 @@ func (m *Model) updateLayout() {
 	}
 
 	contentWidth := m.contentWidth()
+	m.help.Width = contentWidth
 	m.input.Width = max(10, contentWidth-4)
 	m.viewport.Width = max(18, contentWidth-2)
 
@@ -119,8 +120,9 @@ func (m *Model) updateLayout() {
 	inputHeight := lipgloss.Height(m.renderBottomPanel())
 	slashHeight := m.renderSlashMenuHeight(contentWidth)
 	statusHeight := lipgloss.Height(m.renderModelStatus())
-	helpHeight := lipgloss.Height(helpStyle.Render(m.help.View(m.keys)))
-	viewportHeight := max(5, m.height-headerHeight-inputHeight-slashHeight-statusHeight-helpHeight-4)
+	helpHeight := lipgloss.Height(m.renderHelp())
+	chromeHeight := appStyle.GetVerticalFrameSize() + headerHeight + inputHeight + slashHeight + statusHeight + helpHeight
+	viewportHeight := max(5, m.height-chromeHeight)
 	m.viewport.Height = viewportHeight
 
 	if modelsPage, ok := m.pages[pageModels].(*models.Page); ok {

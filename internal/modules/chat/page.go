@@ -69,8 +69,8 @@ func (p *Page) Placeholder() string {
 
 func (p *Page) Content(width int) string {
 	var lines []string
-	for _, message := range p.messages {
-		lines = append(lines, renderMessage(width, message))
+	for i, message := range p.messages {
+		lines = append(lines, p.renderMessage(width, i, message))
 	}
 	return strings.Join(lines, "\n\n")
 }
@@ -209,7 +209,7 @@ func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
 	p.modelMessages = append(p.modelMessages, domain.ToolResultMessage(toolCallID, toolName, result))
 }
 
-func renderMessage(width int, message chatui.Message) string {
+func (p *Page) renderMessage(width int, index int, message chatui.Message) string {
 	label := systemStyle.Render("system")
 	switch message.Type {
 	case chatui.TypeUser:
@@ -222,11 +222,11 @@ func renderMessage(width int, message chatui.Message) string {
 
 	contentWidth := max(20, width)
 	content := lipgloss.NewStyle().Width(contentWidth).Render(message.Content)
-	if message.Type == chatui.TypeAssistant {
+	if message.Type == chatui.TypeAssistant && index != p.streamIndex {
 		content = renderAssistantMarkdown(contentWidth, message.Content)
 	}
 	if message.Type == chatui.TypeTool {
-		content = toolBodyStyle.Width(contentWidth).Render(message.Content)
+		content = toolBodyStyle.Width(max(1, contentWidth-toolBodyStyle.GetHorizontalFrameSize())).Render(message.Content)
 	}
 
 	return fmt.Sprintf("%s\n%s", label, content)

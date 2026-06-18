@@ -42,7 +42,7 @@ func (p *Page) Placeholder() string {
 
 func (p *Page) Content(width int) string {
 	textWidth := max(20, width)
-	codeWidth := max(20, width-4)
+	codeWidth := max(1, width-codeStyle.GetHorizontalFrameSize())
 
 	lines := []string{
 		titleStyle.Render("Available tools"),
