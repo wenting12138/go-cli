@@ -90,6 +90,9 @@ func (p *Page) Content(width int) string {
 
 	var lines []string
 	for i, message := range p.messages {
+		if i > 0 && needsReplyDivider(p.messages[i-1], message) {
+			lines = append(lines, renderReplyDivider(width))
+		}
 		lines = append(lines, p.renderMessage(width, i, message))
 	}
 	p.cachedWidth = width
@@ -410,4 +413,14 @@ func startupLogo() string {
   /resume   restore session
   /tools    inspect tools
 `)
+}
+
+func needsReplyDivider(prev, current chatui.Message) bool {
+	return prev.Type == chatui.TypeUser && current.Type == chatui.TypeAssistant
+}
+
+func renderReplyDivider(width int) string {
+	return lipgloss.NewStyle().
+		Foreground(lipgloss.Color("255")).
+		Render(strings.Repeat("─", max(8, width)))
 }
