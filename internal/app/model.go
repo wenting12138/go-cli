@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	agenttools "go-cli/internal/agent/tools"
 	"go-cli/internal/config"
@@ -17,6 +18,7 @@ import (
 	"go-cli/internal/modules/shared"
 	toolspage "go-cli/internal/modules/tools"
 	chatservice "go-cli/internal/services/chat"
+	"go-cli/internal/sessionstore"
 )
 
 func NewModel(cfg config.State) Model {
@@ -27,11 +29,16 @@ func NewModel(cfg config.State) Model {
 	input.CharLimit = 280
 
 	activeModel, _ := cfg.ActiveModel()
+	store, _ := sessionstore.New()
+	summaries := []sessionstore.Summary{}
+	if store != nil {
+		summaries, _ = store.List()
+	}
 	bus := eventbus.New()
 	pages := map[pageID]shared.Page{
 		pageChat:   chat.NewPage(activeModel),
 		pageModels: models.NewPage(cfg.Config.Models, cfg.Config.CurrentModel),
-		pageResume: resume.NewPage(),
+		pageResume: resume.NewPage(summaries),
 		pageTools:  toolspage.NewPage(agenttools.Specs(activeModel)),
 	}
 	events, _ := bus.Subscribe(128)
@@ -49,6 +56,7 @@ func NewModel(cfg config.State) Model {
 		chatSvc:  chatservice.New(bus),
 		slash:    newSlashMenu(),
 		focus:    focusInput,
+		store:    store,
 	}
 }
 
@@ -96,6 +104,31 @@ func (m *Model) syncViewport() {
 		currentOffset = 0
 	}
 	m.viewport.YOffset = currentOffset
+}
+
+func (m *Model) updateLayout() {
+	if m.width == 0 || m.height == 0 {
+		return
+	}
+
+	contentWidth := m.contentWidth()
+	m.input.Width = max(10, contentWidth-4)
+	m.viewport.Width = max(18, contentWidth-2)
+
+	headerHeight := lipgloss.Height(m.renderHeader())
+	inputHeight := lipgloss.Height(m.renderBottomPanel())
+	slashHeight := m.renderSlashMenuHeight(contentWidth)
+	statusHeight := lipgloss.Height(m.renderModelStatus())
+	helpHeight := lipgloss.Height(helpStyle.Render(m.help.View(m.keys)))
+	viewportHeight := max(5, m.height-headerHeight-inputHeight-slashHeight-statusHeight-helpHeight-4)
+	m.viewport.Height = viewportHeight
+
+	if modelsPage, ok := m.pages[pageModels].(*models.Page); ok {
+		modelsPage.SetSize(contentWidth, viewportHeight)
+	}
+	if resumePage, ok := m.pages[pageResume].(*resume.Page); ok {
+		resumePage.SetSize(contentWidth, viewportHeight)
+	}
 }
 
 func (m Model) currentPage() shared.Page {

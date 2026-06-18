@@ -36,17 +36,20 @@ var (
 )
 
 type Page struct {
-	messages        []domain.Message
-	model           config.ModelConfig
-	sessionID       string
-	streamIndex     int
-	streamRequestID string
+	messages         []domain.Message
+	modelMessages    []domain.Message
+	model            config.ModelConfig
+	sessionID        string
+	streamIndex      int
+	modelStreamIndex int
+	streamRequestID  string
 }
 
 func NewPage(model config.ModelConfig) *Page {
 	return &Page{
-		model:       model,
-		streamIndex: -1,
+		model:            model,
+		streamIndex:      -1,
+		modelStreamIndex: -1,
 		messages: []domain.Message{
 			domain.TextMessage("system", "Chat CLI ready. Type a message or use /resume or /models."),
 			domain.TextMessage("assistant", fmt.Sprintf("This is the main conversation page. Active model: %s/%s, context=%s. Use /resume to open the session recovery page.", model.Provider, model.Name, formatContextWindow(model.ContextWindow))),
@@ -74,7 +77,9 @@ func (p *Page) HandleInput(text string) tea.Cmd {
 	if p.sessionID == "" {
 		p.sessionID = fmt.Sprintf("session-%d", time.Now().UnixNano())
 	}
-	p.messages = append(p.messages, domain.TextMessage("user", text))
+	message := domain.TextMessage("user", text)
+	p.messages = append(p.messages, message)
+	p.modelMessages = append(p.modelMessages, message)
 	return nil
 }
 
@@ -97,6 +102,17 @@ func (p *Page) LoadSession(session domain.Session) {
 	}, session.Messages...)
 }
 
+func (p *Page) RestoreSession(sessionID, title string, uiMessages, modelMessages []domain.Message) {
+	p.sessionID = sessionID
+	p.messages = append([]domain.Message{
+		domain.TextMessage("system", fmt.Sprintf("Resumed session %s: %s", sessionID, title)),
+	}, cloneMessages(uiMessages)...)
+	p.modelMessages = cloneMessages(modelMessages)
+	p.streamIndex = -1
+	p.modelStreamIndex = -1
+	p.streamRequestID = ""
+}
+
 func (p *Page) SetModel(model config.ModelConfig) {
 	p.model = model
 	p.messages = append(p.messages, domain.Message{
@@ -111,16 +127,24 @@ func (p *Page) AppendStream(chunk string) {
 		return
 	}
 	p.messages[p.streamIndex].Content += chunk
+	if p.modelStreamIndex >= 0 && p.modelStreamIndex < len(p.modelMessages) {
+		p.modelMessages[p.modelStreamIndex].Content += chunk
+	}
 }
 
 func (p *Page) FinishStream() {
 	if p.streamIndex < 0 || p.streamIndex >= len(p.messages) {
 		p.streamIndex = -1
+		p.modelStreamIndex = -1
 		p.streamRequestID = ""
 		return
 	}
 	p.messages[p.streamIndex].Content = strings.TrimSpace(p.messages[p.streamIndex].Content)
+	if p.modelStreamIndex >= 0 && p.modelStreamIndex < len(p.modelMessages) {
+		p.modelMessages[p.modelStreamIndex].Content = strings.TrimSpace(p.modelMessages[p.modelStreamIndex].Content)
+	}
 	p.streamIndex = -1
+	p.modelStreamIndex = -1
 	p.streamRequestID = ""
 }
 
@@ -129,6 +153,7 @@ func (p *Page) FailStream(err string) {
 		p.messages = append(p.messages[:p.streamIndex], p.messages[p.streamIndex+1:]...)
 	}
 	p.streamIndex = -1
+	p.modelStreamIndex = -1
 	p.streamRequestID = ""
 	p.messages = append(p.messages, domain.Message{
 		Role:    "system",
@@ -138,7 +163,11 @@ func (p *Page) FailStream(err string) {
 }
 
 func (p *Page) SnapshotMessages() []domain.Message {
-	return append([]domain.Message(nil), p.messages...)
+	return cloneMessages(p.modelMessages)
+}
+
+func (p *Page) UISnapshotMessages() []domain.Message {
+	return cloneMessages(p.messages)
 }
 
 func (p *Page) BeginRequest(requestID string) {
@@ -150,8 +179,11 @@ func (p *Page) BeginAssistantStream(requestID string) {
 	if p.streamRequestID == "" {
 		p.streamRequestID = requestID
 	}
-	p.messages = append(p.messages, domain.TextMessage("assistant", ""))
+	message := domain.TextMessage("assistant", "")
+	p.messages = append(p.messages, message)
+	p.modelMessages = append(p.modelMessages, message)
 	p.streamIndex = len(p.messages) - 1
+	p.modelStreamIndex = len(p.modelMessages) - 1
 	p.streamRequestID = requestID
 }
 
@@ -176,11 +208,15 @@ func (p *Page) SessionID() string {
 }
 
 func (p *Page) AppendToolCall(toolCallID, toolName string, args map[string]any) {
-	p.messages = append(p.messages, domain.ToolCallMessage(toolCallID, toolName, args))
+	message := domain.ToolCallMessage(toolCallID, toolName, args)
+	p.messages = append(p.messages, message)
+	p.modelMessages = append(p.modelMessages, message)
 }
 
 func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
-	p.messages = append(p.messages, domain.ToolResultMessage(toolCallID, toolName, result))
+	uiMessage := domain.ToolResultMessage(toolCallID, toolName, result)
+	p.messages = append(p.messages, uiMessage)
+	p.modelMessages = append(p.modelMessages, uiMessage)
 }
 
 func renderMessage(width int, message domain.Message) string {
@@ -255,4 +291,32 @@ func formatArgs(args map[string]any) string {
 		return "{}"
 	}
 	return string(data)
+}
+
+func (p *Page) SessionTitle() string {
+	for _, message := range p.modelMessages {
+		if message.Role == "user" && strings.TrimSpace(message.Content) != "" {
+			text := strings.TrimSpace(message.Content)
+			if len(text) > 48 {
+				return text[:48] + "..."
+			}
+			return text
+		}
+	}
+	return "Untitled Session"
+}
+
+func cloneMessages(messages []domain.Message) []domain.Message {
+	out := make([]domain.Message, 0, len(messages))
+	for _, message := range messages {
+		cloned := message
+		if len(message.Args) > 0 {
+			cloned.Args = make(map[string]any, len(message.Args))
+			for key, value := range message.Args {
+				cloned.Args[key] = value
+			}
+		}
+		out = append(out, cloned)
+	}
+	return out
 }

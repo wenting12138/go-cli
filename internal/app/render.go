@@ -75,15 +75,20 @@ func (m Model) renderBottomPanel() string {
 }
 
 func (m Model) renderSlashMenu() string {
-	if !m.slash.visible || len(m.slash.filtered) == 0 {
+	items := m.currentSlashItems()
+	if len(items) == 0 {
 		return ""
 	}
 
 	width := m.contentWidth()
 	var lines []string
-	for i, item := range m.slash.filtered {
+	selected := m.slash.selected
+	if selected < 0 || selected >= len(items) {
+		selected = 0
+	}
+	for i, item := range items {
 		prefix := "  "
-		if i == m.slash.selected {
+		if i == selected {
 			prefix = "> "
 		}
 		lines = append(lines, fmt.Sprintf("%s%s  %s", prefix, item.command, item.description))
@@ -98,7 +103,7 @@ func (m Model) renderSlashMenu() string {
 }
 
 func (m Model) renderSlashMenuHeight(width int) int {
-	if !m.slash.visible || len(m.slash.filtered) == 0 {
+	if len(m.currentSlashItems()) == 0 {
 		return 0
 	}
 	return lipgloss.Height(m.renderSlashMenu())

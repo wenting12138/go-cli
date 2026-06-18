@@ -2,48 +2,52 @@ package resume
 
 import (
 	"fmt"
-	"strings"
 
+	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
-	"go-cli/internal/modules/chat/domain"
 	"go-cli/internal/modules/shared"
+	"go-cli/internal/sessionstore"
 )
 
-var (
-	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("212"))
-	bodyStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	hintStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-)
+type item struct {
+	summary sessionstore.Summary
+}
+
+func (i item) Title() string {
+	return fmt.Sprintf("[%s] %s", i.summary.ID, i.summary.Title)
+}
+
+func (i item) Description() string {
+	return i.summary.Preview
+}
+
+func (i item) FilterValue() string {
+	return i.summary.ID
+}
 
 type Page struct {
-	sessions     []domain.Session
+	list         list.Model
 	lastResumed  string
 	systemNotice string
 }
 
-func NewPage() *Page {
-	return &Page{
-		sessions: []domain.Session{
-			{
-				ID:    "1",
-				Title: "Daily Standup Notes",
-				Messages: []domain.Message{
-					{Role: "user", Content: "Summarize today's engineering standup."},
-					{Role: "assistant", Content: "Main blockers were deployment access and flaky integration tests."},
-				},
-			},
-			{
-				ID:    "2",
-				Title: "Release Checklist",
-				Messages: []domain.Message{
-					{Role: "user", Content: "Create a release checklist for v1.2.0."},
-					{Role: "assistant", Content: "Verify changelog, tag build, run smoke tests, and publish artifacts."},
-				},
-			},
-		},
+func NewPage(summaries []sessionstore.Summary) *Page {
+	items := make([]list.Item, 0, len(summaries))
+	for _, summary := range summaries {
+		items = append(items, item{summary: summary})
 	}
+
+	delegate := list.NewDefaultDelegate()
+	delegate.ShowDescription = true
+
+	l := list.New(items, delegate, 0, 0)
+	l.Title = "Available sessions"
+	l.SetFilteringEnabled(false)
+	l.SetShowHelp(false)
+	l.SetShowStatusBar(false)
+
+	return &Page{list: l}
 }
 
 func (p *Page) Title() string {
@@ -51,33 +55,16 @@ func (p *Page) Title() string {
 }
 
 func (p *Page) Placeholder() string {
-	return "Use /resume <id> to restore a session"
+	return "Use arrows to select, Enter to restore"
 }
 
 func (p *Page) Content(width int) string {
-	lines := []string{
-		titleStyle.Render("Available sessions"),
-		bodyStyle.Width(max(20, width)).Render("Use /resume <id> to restore one of the sessions below."),
-	}
-
-	for _, session := range p.sessions {
-		lines = append(lines, "")
-		lines = append(lines, bodyStyle.Width(max(20, width)).Render(fmt.Sprintf("[%s] %s", session.ID, session.Title)))
-		lines = append(lines, hintStyle.Width(max(20, width)).Render(preview(session)))
-	}
-
-	if p.lastResumed != "" {
-		lines = append(lines, "", hintStyle.Render("Last resumed session: "+p.lastResumed))
-	}
-	if p.systemNotice != "" {
-		lines = append(lines, "", hintStyle.Width(max(20, width)).Render(p.systemNotice))
-	}
-
-	return strings.Join(lines, "\n")
+	return p.list.View()
 }
 
 func (p *Page) HandleInput(text string) tea.Cmd {
-	p.systemNotice = "This page does not accept direct input. Use /resume <id>."
+	p.systemNotice = "Use arrow keys and Enter to restore a session."
+	p.list.NewStatusMessage(p.systemNotice)
 	return nil
 }
 
@@ -85,36 +72,65 @@ func (p *Page) ApplyUpdate(shared.PageUpdatedMsg) {}
 
 func (p *Page) SystemMessage(text string) {
 	p.systemNotice = text
+	p.list.NewStatusMessage(text)
 }
 
-func (p *Page) SessionByID(id string) (domain.Session, bool) {
-	for _, session := range p.sessions {
-		if session.ID == id {
-			return session, true
+func (p *Page) HasSession(id string) bool {
+	for _, entry := range p.list.Items() {
+		listItem, ok := entry.(item)
+		if ok && listItem.summary.ID == id {
+			return true
 		}
 	}
-	return domain.Session{}, false
+	return false
 }
 
 func (p *Page) MarkResumed(id string) {
 	p.lastResumed = id
 	p.systemNotice = "Session restored. Returned to chat."
+	p.list.NewStatusMessage(p.systemNotice)
+
+	for i, entry := range p.list.Items() {
+		listItem, ok := entry.(item)
+		if ok && listItem.summary.ID == id {
+			p.list.Select(i)
+			return
+		}
+	}
 }
 
-func preview(session domain.Session) string {
-	if len(session.Messages) == 0 {
-		return "No messages."
+func (p *Page) SetSessions(summaries []sessionstore.Summary) {
+	items := make([]list.Item, 0, len(summaries))
+	selectedID := p.SelectedSessionID()
+	selectedIndex := 0
+
+	for i, summary := range summaries {
+		items = append(items, item{summary: summary})
+		if summary.ID == selectedID {
+			selectedIndex = i
+		}
 	}
-	first := session.Messages[0].Content
-	if len(first) > 56 {
-		first = first[:56] + "..."
+
+	p.list.SetItems(items)
+	if len(items) > 0 {
+		p.list.Select(selectedIndex)
 	}
-	return first
 }
 
-func max(a, b int) int {
-	if a > b {
-		return a
+func (p *Page) SetSize(width, height int) {
+	p.list.SetSize(width, height)
+}
+
+func (p *Page) Update(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	p.list, cmd = p.list.Update(msg)
+	return cmd
+}
+
+func (p *Page) SelectedSessionID() string {
+	selected, ok := p.list.SelectedItem().(item)
+	if !ok {
+		return ""
 	}
-	return b
+	return selected.summary.ID
 }

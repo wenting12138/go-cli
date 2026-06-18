@@ -3,10 +3,10 @@ package app
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 
 	agenttools "go-cli/internal/agent/tools"
 	"go-cli/internal/events"
@@ -15,6 +15,7 @@ import (
 	"go-cli/internal/modules/resume"
 	"go-cli/internal/modules/shared"
 	toolspage "go-cli/internal/modules/tools"
+	"go-cli/internal/sessionstore"
 )
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -23,25 +24,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.help.Width = msg.Width
-
-		contentWidth := m.contentWidth()
-		m.input.Width = max(10, contentWidth-4)
-		m.viewport.Width = max(18, contentWidth-2)
-		if modelsPage, ok := m.pages[pageModels].(*models.Page); ok {
-			modelsPage.SetSize(contentWidth, m.viewport.Height)
-		}
-
-		headerHeight := lipgloss.Height(m.renderHeader())
-		inputHeight := lipgloss.Height(m.renderBottomPanel())
-		slashHeight := m.renderSlashMenuHeight(contentWidth)
-		statusHeight := lipgloss.Height(m.renderModelStatus())
-		helpHeight := lipgloss.Height(helpStyle.Render(m.help.View(m.keys)))
-		viewportHeight := max(5, msg.Height-headerHeight-inputHeight-slashHeight-statusHeight-helpHeight-4)
-
-		m.viewport.Height = viewportHeight
-		if modelsPage, ok := m.pages[pageModels].(*models.Page); ok {
-			modelsPage.SetSize(contentWidth, viewportHeight)
-		}
+		m.updateLayout()
 		m.syncViewport()
 	case tea.KeyMsg:
 		return m.handleKey(msg)
@@ -62,6 +45,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.updateSlashMenu()
+	m.updateLayout()
+	m.syncViewport()
 	return m, cmd
 }
 
@@ -76,7 +61,9 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleBackKey()
 	case m.current == pageModels:
 		return m.handleModelsKey(msg)
-	case m.slash.visible:
+	case m.current == pageResume:
+		return m.handleResumeKey(msg)
+	case m.shouldShowSlashMenu():
 		if handledModel, handledCmd, ok := m.handleSlashMenuKey(msg); ok {
 			return handledModel, handledCmd
 		}
@@ -94,6 +81,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.viewport, cmd = m.viewport.Update(msg)
 	}
 	m.updateSlashMenu()
+	m.updateLayout()
+	m.syncViewport()
 	return m, cmd
 }
 
@@ -115,7 +104,7 @@ func (m *Model) toggleFocus() {
 }
 
 func (m Model) handleBackKey() (tea.Model, tea.Cmd) {
-	if m.slash.visible {
+	if m.shouldShowSlashMenu() {
 		m.slash.hide()
 		m.syncViewport()
 		return m, nil
@@ -141,23 +130,37 @@ func (m Model) handleModelsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) handleResumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	resumePage, ok := m.pages[pageResume].(*resume.Page)
+	if !ok {
+		return m, nil
+	}
+	if key.Matches(msg, m.keys.Send) {
+		return m.handleResumeByID(resumePage.SelectedSessionID())
+	}
+	cmd := resumePage.Update(msg)
+	m.syncViewport()
+	return m, cmd
+}
+
 func (m Model) handleSlashMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
+	total := len(m.currentSlashItems())
 	switch msg.String() {
 	case "up":
-		m.slash.move(-1)
+		m.slash.move(-1, total)
 		return m, nil, true
 	case "down":
-		m.slash.move(1)
+		m.slash.move(1, total)
 		return m, nil, true
 	case "tab":
-		if completion, ok := m.slash.selectedCompletion(); ok {
+		if completion, ok := m.selectedSlashCompletion(); ok {
 			m.input.SetValue(completion + " ")
 			m.input.CursorEnd()
 			m.slash.hide()
 			return m, nil, true
 		}
 	case "enter":
-		if completion, ok := m.slash.selectedCompletion(); ok {
+		if completion, ok := m.selectedSlashCompletion(); ok {
 			m.input.SetValue("")
 			m.slash.hide()
 			model, cmd := m.handleSlashCommand(completion)
@@ -200,6 +203,7 @@ func (m Model) handleChatInput(text string) (tea.Model, tea.Cmd) {
 	}
 
 	chatPage.HandleInput(text)
+	m.persistActiveChat()
 	messages := chatPage.SnapshotMessages()
 	activeModel, err := m.config.ActiveModel()
 	if err != nil {
@@ -305,9 +309,20 @@ func (m *Model) handleResumeByID(id string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	session, found := resumePage.SessionByID(id)
-	if !found {
+	if !resumePage.HasSession(id) {
 		m.currentPage().SystemMessage(fmt.Sprintf("Session not found: %s\nUse /resume to view available sessions.", id))
+		m.syncViewport()
+		return m, nil
+	}
+	if m.store == nil {
+		m.currentPage().SystemMessage("session store unavailable")
+		m.syncViewport()
+		return m, nil
+	}
+
+	session, err := m.store.Load(id)
+	if err != nil {
+		m.currentPage().SystemMessage(err.Error())
 		m.syncViewport()
 		return m, nil
 	}
@@ -317,7 +332,7 @@ func (m *Model) handleResumeByID(id string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	chatPage.LoadSession(session)
+	chatPage.RestoreSession(session.ID, session.Title, session.UIMessages, session.ModelMessages)
 	resumePage.MarkResumed(session.ID)
 	m.current = pageChat
 	m.input.Placeholder = m.currentPage().Placeholder()
@@ -339,22 +354,63 @@ func (m *Model) handleEvent(event any) {
 	case events.ChatStreamChunk:
 		if chatPage.HasActiveStream(e.RequestID) {
 			chatPage.AppendStream(e.Chunk)
+			m.persistActiveChat()
 		}
 	case events.ChatToolCallStarted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.AppendToolCall(e.ToolCallID, e.Tool, e.Args)
+			m.persistActiveChat()
 		}
 	case events.ChatToolCallCompleted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.AppendToolResult(e.ToolCallID, e.Tool, e.Result)
+			m.persistActiveChat()
 		}
 	case events.ChatStreamFailed:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FailStream(e.Err)
+			m.persistActiveChat()
 		}
 	case events.ChatStreamCompleted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FinishStream()
+			m.persistActiveChat()
 		}
 	}
+}
+
+func (m *Model) persistActiveChat() {
+	if m.store == nil {
+		return
+	}
+
+	chatPage, ok := m.pages[pageChat].(*chat.Page)
+	if !ok || chatPage.SessionID() == "" {
+		return
+	}
+
+	_ = m.store.Save(sessionstore.SessionData{
+		ID:            chatPage.SessionID(),
+		Title:         chatPage.SessionTitle(),
+		UIMessages:    chatPage.UISnapshotMessages(),
+		ModelMessages: chatPage.SnapshotMessages(),
+		UpdatedAt:     time.Now(),
+	})
+	m.refreshResumePage()
+}
+
+func (m *Model) refreshResumePage() {
+	if m.store == nil {
+		return
+	}
+	resumePage, ok := m.pages[pageResume].(*resume.Page)
+	if !ok {
+		return
+	}
+	summaries, err := m.store.List()
+	if err != nil {
+		resumePage.SystemMessage(err.Error())
+		return
+	}
+	resumePage.SetSessions(summaries)
 }

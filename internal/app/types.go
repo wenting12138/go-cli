@@ -11,6 +11,7 @@ import (
 	"go-cli/internal/eventbus"
 	"go-cli/internal/modules/shared"
 	chatservice "go-cli/internal/services/chat"
+	"go-cli/internal/sessionstore"
 )
 
 type pageID string
@@ -100,6 +101,7 @@ type Model struct {
 	chatSvc  *chatservice.Service
 	slash    slashMenu
 	focus    focusMode
+	store    *sessionstore.Store
 }
 
 type eventMsg struct {
@@ -113,7 +115,5 @@ type slashCommand struct {
 
 type slashMenu struct {
 	commands []slashCommand
-	filtered []slashCommand
-	visible  bool
 	selected int
 }

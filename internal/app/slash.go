@@ -14,51 +14,63 @@ func newSlashMenu() slashMenu {
 }
 
 func (m *Model) updateSlashMenu() {
-	value := strings.TrimSpace(m.input.Value())
-	if !strings.HasPrefix(value, "/") {
-		m.slash.hide()
+	items := m.currentSlashItems()
+	if len(items) == 0 {
+		m.slash.selected = 0
 		return
 	}
-	if strings.Contains(value, " ") {
-		m.slash.hide()
-		return
+	if m.slash.selected >= len(items) {
+		m.slash.selected = 0
+	}
+	if m.slash.selected < 0 {
+		m.slash.selected = 0
+	}
+}
+
+func (m Model) shouldShowSlashMenu() bool {
+	return len(m.currentSlashItems()) > 0
+}
+
+func (m Model) currentSlashItems() []slashCommand {
+	if m.current != pageChat || m.focus != focusInput {
+		return nil
+	}
+
+	value := strings.TrimSpace(m.input.Value())
+	if value == "" || !strings.HasPrefix(value, "/") || strings.Contains(value, " ") {
+		return nil
 	}
 
 	query := strings.ToLower(value)
-	var filtered []slashCommand
+	filtered := make([]slashCommand, 0, len(m.slash.commands))
 	for _, cmd := range m.slash.commands {
 		if strings.HasPrefix(strings.ToLower(cmd.command), query) {
 			filtered = append(filtered, cmd)
 		}
 	}
-	if len(filtered) == 0 {
-		m.slash.hide()
-		return
-	}
-
-	m.slash.filtered = filtered
-	m.slash.visible = true
-	if m.slash.selected >= len(filtered) {
-		m.slash.selected = 0
-	}
+	return filtered
 }
 
-func (s *slashMenu) move(delta int) {
-	if !s.visible || len(s.filtered) == 0 {
+func (s *slashMenu) move(delta int, total int) {
+	if total <= 0 {
+		s.selected = 0
 		return
 	}
-	s.selected = (s.selected + delta + len(s.filtered)) % len(s.filtered)
+	s.selected = (s.selected + delta + total) % total
 }
 
-func (s *slashMenu) selectedCompletion() (string, bool) {
-	if !s.visible || len(s.filtered) == 0 {
+func (m Model) selectedSlashCompletion() (string, bool) {
+	items := m.currentSlashItems()
+	if len(items) == 0 {
 		return "", false
 	}
-	return s.filtered[s.selected].command, true
+	index := m.slash.selected
+	if index < 0 || index >= len(items) {
+		index = 0
+	}
+	return items[index].command, true
 }
 
 func (s *slashMenu) hide() {
-	s.filtered = nil
-	s.visible = false
 	s.selected = 0
 }
