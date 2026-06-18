@@ -17,6 +17,7 @@ const preservedTailMessages = 6
 type CompactResult struct {
 	Boundary      domain.Message
 	Summary       domain.Message
+	RestoredFiles []domain.Message
 	PreservedTail []domain.Message
 }
 
@@ -30,8 +31,9 @@ func (s *Service) Compact(model config.ModelConfig, systemPrompt string, message
 		return CompactResult{}, err
 	}
 
-	summaryInput := cloneDomainMessages(messages[:len(messages)-preservedTailMessages])
+	summaryInput, stats := microcompactMessages(messages[:len(messages)-preservedTailMessages])
 	preservedTail := cloneDomainMessages(messages[len(messages)-preservedTailMessages:])
+	restoredFiles := buildReadFileRestoration(messages[:len(messages)-preservedTailMessages], preservedTail)
 
 	requestMessages := append(summaryInput, domain.TextMessage("user", compactPrompt()))
 	if strings.TrimSpace(systemPrompt) != "" {
@@ -67,8 +69,17 @@ func (s *Service) Compact(model config.ModelConfig, systemPrompt string, message
 	}
 
 	return CompactResult{
-		Boundary:      domain.CompactBoundaryMessage(fmt.Sprintf("Conversation compacted on %s.", time.Now().Format("2006-01-02 15:04:05"))),
+		Boundary: domain.CompactBoundaryMessage(fmt.Sprintf(
+			"Conversation compacted on %s. summarized=%d microcompact=%d->%d restored_files=%d preserved_tail=%d",
+			time.Now().Format("2006-01-02 15:04:05"),
+			len(summaryInput),
+			stats.InputMessages,
+			stats.OutputMessages,
+			len(restoredFiles),
+			len(preservedTail),
+		)),
 		Summary:       domain.TextMessage("system", compactSummaryMessage(summary)),
+		RestoredFiles: restoredFiles,
 		PreservedTail: preservedTail,
 	}, nil
 }
@@ -79,6 +90,7 @@ You are summarizing a CLI coding session for context compaction.
 Do not call tools.
 Return plain text only.
 Focus on user intent, files touched, key decisions, unresolved issues, and the exact current state of work.
+Your response must follow the requested structure exactly.
 `)
 }
 
@@ -86,12 +98,39 @@ func compactPrompt() string {
 	return strings.TrimSpace(`
 Summarize the conversation above so a coding agent can continue work without losing context.
 
-Include:
-1. The user's current goal
-2. Important files, commands, and tool results
-3. Decisions already made
-4. Bugs, errors, or constraints discovered
-5. Exact pending work and the most recent state
+Use exactly this structure:
+
+CURRENT GOAL
+- one or more bullets
+
+USER CONSTRAINTS
+- one or more bullets
+
+KEY FILES
+- <path>: why it matters
+
+IMPORTANT COMMANDS AND TOOLS
+- command/tool + result
+
+DECISIONS MADE
+- one or more bullets
+
+ERRORS AND FIXES
+- error -> fix
+
+PENDING WORK
+- one or more bullets
+
+LATEST STATE
+- describe precisely what was happening immediately before compaction
+
+NEXT STEP
+- the exact next action the agent should take
+
+Rules:
+- Be concrete. Prefer exact file paths, command names, and decisions.
+- If a section has no content, write "- none".
+- Do not add any section outside this template.
 `)
 }
 
@@ -112,4 +151,100 @@ func cloneDomainMessages(messages []domain.Message) []domain.Message {
 		out = append(out, cloned)
 	}
 	return out
+}
+
+func buildReadFileRestoration(olderMessages, preservedTail []domain.Message) []domain.Message {
+	preservedPaths := make(map[string]struct{})
+	for _, entry := range preservedTail {
+		if entry.Type == domain.MessageTypeToolCall && entry.ToolName == "read_file" {
+			if path := readFilePath(entry.Args); path != "" {
+				preservedPaths[path] = struct{}{}
+			}
+		}
+	}
+
+	type restoredFile struct {
+		path    string
+		summary string
+	}
+
+	var ordered []restoredFile
+	seen := make(map[string]struct{})
+	for i := len(olderMessages) - 2; i >= 0; i-- {
+		call := olderMessages[i]
+		result := olderMessages[i+1]
+		if call.Type != domain.MessageTypeToolCall || call.ToolName != "read_file" {
+			continue
+		}
+		if result.Type != domain.MessageTypeToolResult || result.ToolCallID != call.ToolCallID {
+			continue
+		}
+
+		path := readFilePath(call.Args)
+		if path == "" {
+			continue
+		}
+		if _, ok := preservedPaths[path]; ok {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+
+		ordered = append(ordered, restoredFile{
+			path:    path,
+			summary: summarizeReadFileResult(result.Result),
+		})
+		if len(ordered) == 3 {
+			break
+		}
+	}
+
+	out := make([]domain.Message, 0, len(ordered))
+	for i := len(ordered) - 1; i >= 0; i-- {
+		entry := ordered[i]
+		out = append(out, domain.TextMessage("system", fmt.Sprintf(
+			"Restored read_file context:\npath: %s\n%s",
+			entry.path,
+			entry.summary,
+		)))
+	}
+	return out
+}
+
+func readFilePath(args map[string]any) string {
+	if len(args) == 0 {
+		return ""
+	}
+	path, _ := args["path"].(string)
+	return strings.TrimSpace(path)
+}
+
+func summarizeReadFileResult(result string) string {
+	lines := strings.Split(strings.TrimSpace(result), "\n")
+	if len(lines) == 0 {
+		return "summary: empty result"
+	}
+
+	var kept []string
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "path: ") || strings.HasPrefix(line, "lines: ") {
+			kept = append(kept, line)
+			continue
+		}
+		if len(kept) >= 8 {
+			break
+		}
+		kept = append(kept, line)
+	}
+
+	if len(kept) == 0 {
+		return "summary: no retained lines"
+	}
+	return strings.Join(kept, "\n")
 }

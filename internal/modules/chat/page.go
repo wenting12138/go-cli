@@ -257,10 +257,11 @@ func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
 	p.markDirty()
 }
 
-func (p *Page) ApplyCompact(boundary, summary domain.Message, preservedTail []domain.Message) {
+func (p *Page) ApplyCompact(boundary, summary domain.Message, restoredFiles, preservedTail []domain.Message) {
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, boundary.Content))
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, "Compaction summary saved to model context."))
-	p.modelMessages = append([]domain.Message{boundary, summary}, cloneMessages(preservedTail)...)
+	p.modelMessages = append([]domain.Message{boundary, summary}, cloneMessages(restoredFiles)...)
+	p.modelMessages = append(p.modelMessages, cloneMessages(preservedTail)...)
 	p.streamIndex = -1
 	p.modelStreamIndex = -1
 	p.streamRequestID = ""

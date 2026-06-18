@@ -11,12 +11,16 @@ import (
 	agenttools "go-cli/internal/agent/tools"
 	"go-cli/internal/events"
 	"go-cli/internal/modules/chat"
+	"go-cli/internal/modules/chat/domain"
 	"go-cli/internal/modules/models"
 	"go-cli/internal/modules/resume"
 	"go-cli/internal/modules/shared"
 	toolspage "go-cli/internal/modules/tools"
 	"go-cli/internal/sessionstore"
 )
+
+const autoCompactThresholdRatio = 0.70
+const autoCompactMinimumMessages = 8
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -203,7 +207,6 @@ func (m Model) handleChatInput(text string) (tea.Model, tea.Cmd) {
 	}
 
 	chatPage.HandleInput(text)
-	messages := chatPage.SnapshotMessages()
 	activeModel, err := m.config.ActiveModel()
 	if err != nil {
 		chatPage.FailStream(err.Error())
@@ -214,14 +217,31 @@ func (m Model) handleChatInput(text string) (tea.Model, tea.Cmd) {
 	if err == nil {
 		chatPage.SetSystemPrompt(systemPrompt)
 	}
+	if shouldAutoCompact(chatPage.SystemPrompt(), chatPage.SnapshotMessages(), activeModel.ContextWindow) {
+		result, compactErr := m.chatSvc.Compact(activeModel, chatPage.SystemPrompt(), chatPage.SnapshotMessages())
+		if compactErr == nil {
+			chatPage.ApplyCompact(result.Boundary, result.Summary, result.RestoredFiles, result.PreservedTail)
+			chatPage.SystemMessage("Auto compacted context before sending.")
+		} else {
+			chatPage.SystemMessage(fmt.Sprintf("Auto compact skipped: %s", compactErr))
+		}
+	}
 	m.persistActiveChat()
-	if err := m.chatSvc.StartStream(activeModel, messages); err != nil {
+	if err := m.chatSvc.StartStream(activeModel, chatPage.SnapshotMessages()); err != nil {
 		chatPage.FailStream(fmt.Sprintf("model request failed: %s", err))
 		m.syncViewport()
 		return m, nil
 	}
 	m.syncViewport()
 	return m, nil
+}
+
+func shouldAutoCompact(systemPrompt string, messages []domain.Message, contextWindow int) bool {
+	if contextWindow <= 0 || len(messages) < autoCompactMinimumMessages {
+		return false
+	}
+	used := estimateContextUsage(systemPrompt, messages)
+	return float64(used) >= float64(contextWindow)*autoCompactThresholdRatio
 }
 
 func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
@@ -302,7 +322,7 @@ func (m *Model) handleCompactCommand() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	chatPage.ApplyCompact(result.Boundary, result.Summary, result.PreservedTail)
+	chatPage.ApplyCompact(result.Boundary, result.Summary, result.RestoredFiles, result.PreservedTail)
 	m.persistActiveChat()
 	m.syncViewport()
 	return m, nil
