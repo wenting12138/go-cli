@@ -21,12 +21,19 @@ const PageName = "chat"
 var (
 	userStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("86")).
-			Bold(true)
+			BorderLeft(true).
+			BorderForeground(lipgloss.Color("86")).
+			PaddingLeft(1)
 	assistantStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("212")).
-			Bold(true)
+			BorderLeft(true).
+			BorderForeground(lipgloss.Color("63")).
+			PaddingLeft(1).
+			PaddingLeft(1)
 	systemStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("244"))
+			Foreground(lipgloss.Color("245")).
+			BorderLeft(true).
+			BorderForeground(lipgloss.Color("240")).
+			PaddingLeft(1)
 	toolLabelStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("220")).
 			Bold(true)
@@ -45,6 +52,11 @@ type Page struct {
 	streamIndex      int
 	modelStreamIndex int
 	streamRequestID  string
+	cachedWidth      int
+	cachedContent    string
+	frozenRendered   []string
+	frozenWidth      int
+	dirty            bool
 }
 
 func NewPage(model config.ModelConfig) *Page {
@@ -52,9 +64,9 @@ func NewPage(model config.ModelConfig) *Page {
 		model:            model,
 		streamIndex:      -1,
 		modelStreamIndex: -1,
+		dirty:            true,
 		messages: []chatui.Message{
-			chatui.TextMessage(chatui.TypeSystem, "Chat CLI ready. Type a message or use /resume or /models."),
-			chatui.TextMessage(chatui.TypeAssistant, fmt.Sprintf("This is the main conversation page. Active model: %s/%s, context=%s. Use /resume to open the session recovery page.", model.Provider, model.Name, formatContextWindow(model.ContextWindow))),
+			chatui.TextMessage(chatui.TypeSystem, startupLogo()),
 		},
 	}
 }
@@ -68,11 +80,22 @@ func (p *Page) Placeholder() string {
 }
 
 func (p *Page) Content(width int) string {
+	if !p.dirty && p.cachedWidth == width {
+		return p.cachedContent
+	}
+
+	if p.frozenWidth != width || len(p.frozenRendered) != len(p.messages) {
+		p.rebuildFrozenRendered(width)
+	}
+
 	var lines []string
 	for i, message := range p.messages {
 		lines = append(lines, p.renderMessage(width, i, message))
 	}
-	return strings.Join(lines, "\n\n")
+	p.cachedWidth = width
+	p.cachedContent = strings.Join(lines, "\n\n")
+	p.dirty = false
+	return p.cachedContent
 }
 
 func (p *Page) HandleInput(text string) tea.Cmd {
@@ -81,6 +104,7 @@ func (p *Page) HandleInput(text string) tea.Cmd {
 	}
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeUser, text))
 	p.modelMessages = append(p.modelMessages, domain.TextMessage("user", text))
+	p.markDirty()
 	return nil
 }
 
@@ -90,10 +114,12 @@ func (p *Page) ApplyUpdate(msg shared.PageUpdatedMsg) {
 		return
 	}
 	p.messages = append(p.messages, message)
+	p.markDirty()
 }
 
 func (p *Page) SystemMessage(text string) {
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, text))
+	p.markDirty()
 }
 
 func (p *Page) LoadSession(session domain.Session) {
@@ -101,6 +127,7 @@ func (p *Page) LoadSession(session domain.Session) {
 	p.messages = append([]chatui.Message{
 		chatui.TextMessage(chatui.TypeSystem, fmt.Sprintf("Resumed session %s: %s", session.ID, session.Title)),
 	}, toUIMessages(session.Messages)...)
+	p.markDirty()
 }
 
 func (p *Page) RestoreSession(sessionID, title string, uiMessages []chatui.Message, modelMessages []domain.Message) {
@@ -112,11 +139,13 @@ func (p *Page) RestoreSession(sessionID, title string, uiMessages []chatui.Messa
 	p.streamIndex = -1
 	p.modelStreamIndex = -1
 	p.streamRequestID = ""
+	p.markDirty()
 }
 
 func (p *Page) SetModel(model config.ModelConfig) {
 	p.model = model
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, fmt.Sprintf("Switched model to %s (%s/%s), context=%s.", model.ID, model.Provider, model.Name, formatContextWindow(model.ContextWindow))))
+	p.markDirty()
 }
 
 func (p *Page) AppendStream(chunk string) {
@@ -127,6 +156,7 @@ func (p *Page) AppendStream(chunk string) {
 	if p.modelStreamIndex >= 0 && p.modelStreamIndex < len(p.modelMessages) {
 		p.modelMessages[p.modelStreamIndex].Content += chunk
 	}
+	p.markDirty()
 }
 
 func (p *Page) FinishStream() {
@@ -143,6 +173,7 @@ func (p *Page) FinishStream() {
 	p.streamIndex = -1
 	p.modelStreamIndex = -1
 	p.streamRequestID = ""
+	p.markDirty()
 }
 
 func (p *Page) FailStream(err string) {
@@ -153,6 +184,7 @@ func (p *Page) FailStream(err string) {
 	p.modelStreamIndex = -1
 	p.streamRequestID = ""
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, err))
+	p.markDirty()
 }
 
 func (p *Page) SnapshotMessages() []domain.Message {
@@ -174,9 +206,11 @@ func (p *Page) BeginAssistantStream(requestID string) {
 	}
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeAssistant, ""))
 	p.modelMessages = append(p.modelMessages, domain.TextMessage("assistant", ""))
+	p.frozenRendered = append(p.frozenRendered, "")
 	p.streamIndex = len(p.messages) - 1
 	p.modelStreamIndex = len(p.modelMessages) - 1
 	p.streamRequestID = requestID
+	p.markDirty()
 }
 
 func (p *Page) HasActiveRequest(requestID string) bool {
@@ -202,34 +236,38 @@ func (p *Page) SessionID() string {
 func (p *Page) AppendToolCall(toolCallID, toolName string, args map[string]any) {
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeTool, formatToolCall(toolCallID, toolName, args)))
 	p.modelMessages = append(p.modelMessages, domain.ToolCallMessage(toolCallID, toolName, args))
+	p.markDirty()
 }
 
 func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeTool, formatToolResult(toolCallID, toolName, result)))
 	p.modelMessages = append(p.modelMessages, domain.ToolResultMessage(toolCallID, toolName, result))
+	p.markDirty()
 }
 
 func (p *Page) renderMessage(width int, index int, message chatui.Message) string {
-	label := systemStyle.Render("system")
-	switch message.Type {
-	case chatui.TypeUser:
-		label = userStyle.Render("you")
-	case chatui.TypeAssistant:
-		label = assistantStyle.Render("assistant")
-	case chatui.TypeTool:
-		label = toolLabelStyle.Render("tool")
-	}
-
 	contentWidth := max(20, width)
 	content := lipgloss.NewStyle().Width(contentWidth).Render(message.Content)
-	if message.Type == chatui.TypeAssistant && index != p.streamIndex {
-		content = renderAssistantMarkdown(contentWidth, message.Content)
+	if message.Type == chatui.TypeAssistant {
+		if index == p.streamIndex {
+			content = assistantStyle.Width(contentWidth - assistantStyle.GetHorizontalFrameSize()).Render(message.Content)
+		} else if index < len(p.frozenRendered) && p.frozenRendered[index] != "" {
+			content = assistantStyle.Width(contentWidth - assistantStyle.GetHorizontalFrameSize()).Render(p.frozenRendered[index])
+		} else {
+			content = assistantStyle.Width(contentWidth - assistantStyle.GetHorizontalFrameSize()).Render(renderAssistantMarkdown(contentWidth, message.Content))
+		}
 	}
 	if message.Type == chatui.TypeTool {
 		content = toolBodyStyle.Width(max(1, contentWidth-toolBodyStyle.GetHorizontalFrameSize())).Render(message.Content)
 	}
+	if message.Type == chatui.TypeUser {
+		content = userStyle.Width(max(1, contentWidth-userStyle.GetHorizontalFrameSize())).Render(message.Content)
+	}
+	if message.Type == chatui.TypeSystem {
+		content = systemStyle.Width(max(1, contentWidth-systemStyle.GetHorizontalFrameSize())).Render(message.Content)
+	}
 
-	return fmt.Sprintf("%s\n%s", label, content)
+	return content
 }
 
 func max(a, b int) int {
@@ -341,4 +379,35 @@ func toUIType(role string) string {
 	default:
 		return chatui.TypeSystem
 	}
+}
+
+func (p *Page) markDirty() {
+	p.dirty = true
+}
+
+func (p *Page) rebuildFrozenRendered(width int) {
+	p.frozenWidth = width
+	p.frozenRendered = make([]string, len(p.messages))
+	contentWidth := max(20, width)
+
+	for i, message := range p.messages {
+		if message.Type != chatui.TypeAssistant || i == p.streamIndex {
+			continue
+		}
+		p.frozenRendered[i] = renderAssistantMarkdown(contentWidth, message.Content)
+	}
+}
+
+func startupLogo() string {
+	return strings.TrimSpace(`
+   ____        _______ _      ___
+  / ___| ___  / / ____| |    |_ _|
+ | |  _ / _ \/ / |    | |     | |
+ | |_| | (_) / /| |___ | |___  | |
+  \____|\___/_/  \____||_____|___|
+
+  /models   choose model
+  /resume   restore session
+  /tools    inspect tools
+`)
 }
