@@ -122,6 +122,15 @@ func defaultConfig() Config {
 				ContextWindow: 128000,
 				MaxTokens:     4096,
 			},
+			{
+				ID:            "ollama-qwen3",
+				Provider:      "ollama",
+				Name:          "qwen3:latest",
+				BaseURL:       "http://localhost:11434",
+				APIKey:        "",
+				ContextWindow: 32000,
+				MaxTokens:     2048,
+			},
 		},
 	}
 }

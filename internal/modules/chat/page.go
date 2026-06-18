@@ -59,7 +59,7 @@ func (p *Page) Content(width int) string {
 
 func (p *Page) HandleInput(text string) tea.Cmd {
 	p.messages = append(p.messages, domain.Message{Role: "user", Content: text})
-	return bot.FakeReplyCmd(text, p.model)
+	return bot.ReplyCmd(append([]domain.Message(nil), p.messages...), p.model)
 }
 
 func (p *Page) ApplyUpdate(msg shared.PageUpdatedMsg) {
