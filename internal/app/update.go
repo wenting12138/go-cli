@@ -333,6 +333,7 @@ func (m *Model) handleEvent(event any) {
 
 	switch e := event.(type) {
 	case events.ChatStreamStarted:
+		chatPage.BeginRequest(e.RequestID)
 	case events.ChatResponseStarted:
 		chatPage.BeginAssistantStream(e.RequestID)
 	case events.ChatStreamChunk:
@@ -340,19 +341,19 @@ func (m *Model) handleEvent(event any) {
 			chatPage.AppendStream(e.Chunk)
 		}
 	case events.ChatToolCallStarted:
-		if chatPage.HasActiveStream(e.RequestID) {
+		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.AppendToolCall(e.ToolCallID, e.Tool, e.Args)
 		}
 	case events.ChatToolCallCompleted:
-		if chatPage.HasActiveStream(e.RequestID) {
+		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.AppendToolResult(e.ToolCallID, e.Tool, e.Result)
 		}
 	case events.ChatStreamFailed:
-		if chatPage.HasActiveStream(e.RequestID) {
+		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FailStream(e.Err)
 		}
 	case events.ChatStreamCompleted:
-		if chatPage.HasActiveStream(e.RequestID) {
+		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FinishStream()
 		}
 	}

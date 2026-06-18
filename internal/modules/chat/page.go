@@ -135,14 +135,26 @@ func (p *Page) SnapshotMessages() []domain.Message {
 	return append([]domain.Message(nil), p.messages...)
 }
 
+func (p *Page) BeginRequest(requestID string) {
+	p.streamRequestID = requestID
+	p.streamIndex = -1
+}
+
 func (p *Page) BeginAssistantStream(requestID string) {
+	if p.streamRequestID == "" {
+		p.streamRequestID = requestID
+	}
 	p.messages = append(p.messages, domain.TextMessage("assistant", ""))
 	p.streamIndex = len(p.messages) - 1
 	p.streamRequestID = requestID
 }
 
-func (p *Page) HasActiveStream(requestID string) bool {
+func (p *Page) HasActiveRequest(requestID string) bool {
 	return p.streamRequestID != "" && p.streamRequestID == requestID
+}
+
+func (p *Page) HasActiveStream(requestID string) bool {
+	return p.HasActiveRequest(requestID) && p.streamIndex >= 0
 }
 
 func (p *Page) HasPendingStream() bool {

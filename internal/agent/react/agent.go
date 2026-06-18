@@ -46,7 +46,7 @@ func New(client modelclient.Client, tools []Tool) *Agent {
 	return &Agent{
 		client:   client,
 		tools:    indexed,
-		maxSteps: 6,
+		maxSteps: 100,
 	}
 }
 
@@ -56,7 +56,16 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 	}, history...)
 
 	for step := 0; step < a.maxSteps; step++ {
-		result, err := a.collect(ctx, messages)
+		streamStarted := false
+		result, err := a.collect(ctx, messages, func(chunk string) {
+			if hooks.OnFinalStart != nil && !streamStarted {
+				hooks.OnFinalStart()
+				streamStarted = true
+			}
+			if hooks.OnFinalChunk != nil {
+				hooks.OnFinalChunk(chunk)
+			}
+		})
 		if err != nil {
 			return err
 		}
@@ -68,10 +77,10 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 			}
 
 			messages = append(messages, domain.TextMessage("assistant", final))
-			if hooks.OnFinalStart != nil {
+			if hooks.OnFinalStart != nil && !streamStarted {
 				hooks.OnFinalStart()
 			}
-			if hooks.OnFinalChunk != nil {
+			if hooks.OnFinalChunk != nil && !streamStarted {
 				for _, chunk := range result.TextChunks {
 					if chunk == "" {
 						continue
@@ -130,7 +139,7 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 	return fmt.Errorf("agent exceeded max steps without final answer")
 }
 
-func (a *Agent) collect(ctx context.Context, messages []domain.Message) (collectResult, error) {
+func (a *Agent) collect(ctx context.Context, messages []domain.Message, onTextChunk func(string)) (collectResult, error) {
 	result := collectResult{}
 	request := protocol.ChatRequest{
 		Messages: messages,
@@ -141,6 +150,9 @@ func (a *Agent) collect(ctx context.Context, messages []domain.Message) (collect
 		switch event.Type {
 		case protocol.EventTypeTextDelta:
 			result.TextChunks = append(result.TextChunks, event.Text)
+			if onTextChunk != nil && event.Text != "" {
+				onTextChunk(event.Text)
+			}
 		case protocol.EventTypeToolCall:
 			result.ToolCalls = append(result.ToolCalls, protocol.ToolCall{
 				ID:        event.ToolCall.ID,
