@@ -257,15 +257,55 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.input.Placeholder = m.currentPage().Placeholder()
 		m.syncViewport()
 		return m, nil
+	case "compact":
+		return m.handleCompactCommand()
 	case "clear":
 		return m.handleClearCommand()
 	default:
 		if page := m.currentPage(); page != nil {
-			page.SystemMessage(fmt.Sprintf("Unknown command: /%s\nAvailable commands: /chat /models /models <id> /resume /resume <id> /tools /clear", parts[0]))
+			page.SystemMessage(fmt.Sprintf("Unknown command: /%s\nAvailable commands: /chat /models /models <id> /resume /resume <id> /tools /compact /clear", parts[0]))
 		}
 		m.syncViewport()
 		return m, nil
 	}
+}
+
+func (m *Model) handleCompactCommand() (tea.Model, tea.Cmd) {
+	chatPage, ok := m.pages[pageChat].(*chat.Page)
+	if !ok {
+		return m, nil
+	}
+	if chatPage.HasPendingStream() {
+		chatPage.SystemMessage("wait for the current response to finish")
+		m.syncViewport()
+		return m, nil
+	}
+
+	activeModel, err := m.config.ActiveModel()
+	if err != nil {
+		chatPage.SystemMessage(err.Error())
+		m.syncViewport()
+		return m, nil
+	}
+
+	if chatPage.SystemPrompt() == "" {
+		systemPrompt, promptErr := m.chatSvc.BuildSystemPrompt(activeModel)
+		if promptErr == nil {
+			chatPage.SetSystemPrompt(systemPrompt)
+		}
+	}
+
+	result, err := m.chatSvc.Compact(activeModel, chatPage.SystemPrompt(), chatPage.SnapshotMessages())
+	if err != nil {
+		chatPage.SystemMessage(err.Error())
+		m.syncViewport()
+		return m, nil
+	}
+
+	chatPage.ApplyCompact(result.Boundary, result.Summary, result.PreservedTail)
+	m.persistActiveChat()
+	m.syncViewport()
+	return m, nil
 }
 
 func (m *Model) handleClearCommand() (tea.Model, tea.Cmd) {

@@ -8,6 +8,7 @@ func newSlashMenu() slashMenu {
 		{command: "/models", description: "open model selector"},
 		{command: "/resume", description: "open session resume page"},
 		{command: "/tools", description: "inspect tool definitions"},
+		{command: "/compact", description: "compact model conversation"},
 		{command: "/clear", description: "clear current chat"},
 	}
 	return slashMenu{commands: commands}

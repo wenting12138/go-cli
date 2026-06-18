@@ -257,6 +257,16 @@ func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
 	p.markDirty()
 }
 
+func (p *Page) ApplyCompact(boundary, summary domain.Message, preservedTail []domain.Message) {
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, boundary.Content))
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, "Compaction summary saved to model context."))
+	p.modelMessages = append([]domain.Message{boundary, summary}, cloneMessages(preservedTail)...)
+	p.streamIndex = -1
+	p.modelStreamIndex = -1
+	p.streamRequestID = ""
+	p.markDirty()
+}
+
 func (p *Page) renderMessage(width int, index int, message chatui.Message) string {
 	contentWidth := max(20, width)
 	content := lipgloss.NewStyle().Width(contentWidth).Render(message.Content)
@@ -371,6 +381,8 @@ func toUIMessages(messages []domain.Message) []chatui.Message {
 	out := make([]chatui.Message, 0, len(messages))
 	for _, message := range messages {
 		switch message.Type {
+		case domain.MessageTypeCompact:
+			out = append(out, chatui.TextMessage(chatui.TypeSystem, message.Content))
 		case domain.MessageTypeToolCall:
 			out = append(out, chatui.TextMessage(chatui.TypeTool, formatToolCall(message.ToolCallID, message.ToolName, message.Args)))
 		case domain.MessageTypeToolResult:

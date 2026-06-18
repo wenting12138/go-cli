@@ -3,10 +3,12 @@ package app
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/charmbracelet/lipgloss"
 
 	"go-cli/internal/modules/chat"
+	"go-cli/internal/modules/chat/domain"
 )
 
 func (m Model) View() string {
@@ -57,12 +59,21 @@ func (m Model) renderModelStatus() string {
 	}
 
 	sessionID := "-"
+	usedContext := 0
 	if chatPage, ok := m.pages[pageChat].(*chat.Page); ok && chatPage.SessionID() != "" {
 		sessionID = chatPage.SessionID()
+		usedContext = estimateContextUsage(chatPage.SystemPrompt(), chatPage.SnapshotMessages())
 	}
 
 	return statusStyle.Width(width).Render(
-		fmt.Sprintf("session: %s  model: %s  context: %s  focus: %s", sessionID, model.ID, formatContextWindow(model.ContextWindow), m.focus),
+		fmt.Sprintf(
+			"session: %s  model: %s  used: %s/%s  focus: %s",
+			sessionID,
+			model.ID,
+			formatContextWindow(usedContext),
+			formatContextWindow(model.ContextWindow),
+			m.focus,
+		),
 	)
 }
 
@@ -144,4 +155,28 @@ func (m Model) renderScrollbar() string {
 	}
 
 	return strings.Join(track, "\n")
+}
+
+func estimateContextUsage(systemPrompt string, messages []domain.Message) int {
+	total := roughTokens(systemPrompt)
+	for _, message := range messages {
+		total += roughTokens(message.ModelRole())
+		total += roughTokens(message.ModelContent())
+	}
+	return total
+}
+
+func roughTokens(text string) int {
+	if strings.TrimSpace(text) == "" {
+		return 0
+	}
+	runes := utf8.RuneCountInString(text)
+	tokens := runes / 4
+	if runes%4 != 0 {
+		tokens++
+	}
+	if tokens < 1 {
+		return 1
+	}
+	return tokens
 }

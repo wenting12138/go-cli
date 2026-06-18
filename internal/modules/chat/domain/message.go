@@ -6,6 +6,7 @@ const (
 	MessageTypeText       = "text"
 	MessageTypeToolCall   = "tool_call"
 	MessageTypeToolResult = "tool_result"
+	MessageTypeCompact    = "compact_boundary"
 )
 
 type Message struct {
@@ -49,6 +50,14 @@ func ToolResultMessage(toolCallID, toolName, result string) Message {
 		ToolName:   toolName,
 		ToolCallID: toolCallID,
 		Result:     result,
+	}
+}
+
+func CompactBoundaryMessage(content string) Message {
+	return Message{
+		Role:    "system",
+		Type:    MessageTypeCompact,
+		Content: content,
 	}
 }
 
