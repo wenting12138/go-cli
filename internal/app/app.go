@@ -76,6 +76,11 @@ var (
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("62")).
 			Padding(0, 1)
+	inactiveBoxStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("238")).
+				Foreground(lipgloss.Color("242")).
+				Padding(0, 1)
 )
 
 type Model struct {
@@ -91,6 +96,7 @@ type Model struct {
 	bus      *eventbus.Bus
 	events   <-chan any
 	chatSvc  *chatservice.Service
+	slash    slashMenu
 }
 
 func NewModel(cfg config.State) Model {
@@ -120,6 +126,7 @@ func NewModel(cfg config.State) Model {
 		bus:      bus,
 		events:   events,
 		chatSvc:  chatservice.New(bus),
+		slash:    newSlashMenu(),
 	}
 }
 
@@ -149,9 +156,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		contentWidth := max(20, msg.Width-4)
 		headerHeight := lipgloss.Height(m.renderHeader())
 		inputHeight := 3
+		slashHeight := m.renderSlashMenuHeight(contentWidth)
 		statusHeight := 1
 		helpHeight := 1
-		viewportHeight := max(5, msg.Height-headerHeight-inputHeight-statusHeight-helpHeight-4)
+		viewportHeight := max(5, msg.Height-headerHeight-inputHeight-slashHeight-statusHeight-helpHeight-4)
 
 		m.viewport.Width = contentWidth
 		m.viewport.Height = viewportHeight
@@ -165,6 +173,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
 		case key.Matches(msg, m.keys.Back):
+			if m.slash.visible {
+				m.slash.hide()
+				m.syncViewport()
+				return m, nil
+			}
 			if m.current != pageChat {
 				m.current = pageChat
 				m.input.Placeholder = m.currentPage().Placeholder()
@@ -182,6 +195,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			cmd := modelsPage.Update(msg)
 			m.syncViewport()
 			return m, cmd
+		case m.slash.visible:
+			switch msg.String() {
+			case "up":
+				m.slash.move(-1)
+				return m, nil
+			case "down":
+				m.slash.move(1)
+				return m, nil
+			case "tab":
+				if completion, ok := m.slash.selectedCompletion(); ok {
+					m.input.SetValue(completion + " ")
+					m.input.CursorEnd()
+					m.slash.hide()
+					return m, nil
+				}
+			case "enter":
+				if completion, ok := m.slash.selectedCompletion(); ok {
+					m.input.SetValue("")
+					m.slash.hide()
+					return m.handleSlashCommand(completion)
+				}
+			}
 		case key.Matches(msg, m.keys.Send):
 			text := strings.TrimSpace(m.input.Value())
 			if text == "" {
@@ -240,6 +275,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	m.updateSlashMenu()
 	return m, cmd
 }
 
@@ -248,14 +284,20 @@ func (m Model) View() string {
 		return "Loading..."
 	}
 
-	body := lipgloss.JoinVertical(
-		lipgloss.Left,
+	sections := []string{
 		m.renderHeader(),
 		m.viewport.View(),
-		inputBoxStyle.Width(m.viewport.Width).Render(m.input.View()),
-		m.renderModelStatus(),
-		helpStyle.Render(m.help.View(m.keys)),
-	)
+		m.renderBottomPanel(),
+	}
+
+	if m.current == pageChat {
+		sections = append(sections, m.renderSlashMenu())
+	}
+
+	sections = append(sections, m.renderModelStatus())
+	sections = append(sections, helpStyle.Render(m.help.View(m.keys)))
+
+	body := lipgloss.JoinVertical(lipgloss.Left, sections...)
 
 	return appStyle.Render(body)
 }
@@ -365,6 +407,7 @@ func (m *Model) syncViewport() {
 		return
 	}
 	m.input.Placeholder = page.Placeholder()
+	m.updateSlashMenu()
 	m.viewport.SetContent(page.Content(m.viewport.Width))
 	m.viewport.GotoTop()
 }
@@ -412,6 +455,49 @@ func (m Model) renderModelStatus() string {
 	)
 }
 
+func (m Model) renderBottomPanel() string {
+	width := m.viewport.Width
+	if width <= 0 {
+		width = max(20, m.width-4)
+	}
+
+	if m.current == pageChat {
+		return inputBoxStyle.Width(width).Render(m.input.View())
+	}
+
+	return inactiveBoxStyle.Width(width).Render("commands are available on the chat page")
+}
+
+func (m Model) renderSlashMenu() string {
+	if !m.slash.visible || len(m.slash.filtered) == 0 {
+		return ""
+	}
+
+	width := max(20, m.viewport.Width)
+	var lines []string
+	for i, item := range m.slash.filtered {
+		prefix := "  "
+		if i == m.slash.selected {
+			prefix = "> "
+		}
+		lines = append(lines, fmt.Sprintf("%s%s  %s", prefix, item.command, item.description))
+	}
+
+	return lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("240")).
+		Padding(0, 1).
+		Width(width).
+		Render(strings.Join(lines, "\n"))
+}
+
+func (m Model) renderSlashMenuHeight(width int) int {
+	if !m.slash.visible || len(m.slash.filtered) == 0 {
+		return 0
+	}
+	return lipgloss.Height(m.renderSlashMenu())
+}
+
 func (m Model) currentPage() shared.Page {
 	return m.pages[m.current]
 }
@@ -442,4 +528,76 @@ func waitEventCmd(events <-chan any) tea.Cmd {
 		}
 		return eventMsg{event: event}
 	}
+}
+
+type slashCommand struct {
+	command     string
+	description string
+}
+
+type slashMenu struct {
+	commands []slashCommand
+	filtered []slashCommand
+	visible  bool
+	selected int
+}
+
+func newSlashMenu() slashMenu {
+	commands := []slashCommand{
+		{command: "/chat", description: "back to chat page"},
+		{command: "/models", description: "open model selector"},
+		{command: "/resume", description: "open session resume page"},
+		{command: "/clear", description: "clear current chat"},
+	}
+	return slashMenu{commands: commands}
+}
+
+func (m *Model) updateSlashMenu() {
+	value := strings.TrimSpace(m.input.Value())
+	if !strings.HasPrefix(value, "/") {
+		m.slash.hide()
+		return
+	}
+	if strings.Contains(value, " ") {
+		m.slash.hide()
+		return
+	}
+
+	query := strings.ToLower(value)
+	var filtered []slashCommand
+	for _, cmd := range m.slash.commands {
+		if strings.HasPrefix(strings.ToLower(cmd.command), query) {
+			filtered = append(filtered, cmd)
+		}
+	}
+	if len(filtered) == 0 {
+		m.slash.hide()
+		return
+	}
+
+	m.slash.filtered = filtered
+	m.slash.visible = true
+	if m.slash.selected >= len(filtered) {
+		m.slash.selected = 0
+	}
+}
+
+func (s *slashMenu) move(delta int) {
+	if !s.visible || len(s.filtered) == 0 {
+		return
+	}
+	s.selected = (s.selected + delta + len(s.filtered)) % len(s.filtered)
+}
+
+func (s *slashMenu) selectedCompletion() (string, bool) {
+	if !s.visible || len(s.filtered) == 0 {
+		return "", false
+	}
+	return s.filtered[s.selected].command, true
+}
+
+func (s *slashMenu) hide() {
+	s.filtered = nil
+	s.visible = false
+	s.selected = 0
 }
