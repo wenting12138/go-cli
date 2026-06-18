@@ -30,10 +30,11 @@ type request struct {
 }
 
 type message struct {
-	Role       string            `json:"role"`
-	Content    string            `json:"content,omitempty"`
-	ToolCalls  []messageToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string            `json:"tool_call_id,omitempty"`
+	Role             string            `json:"role"`
+	Content          string            `json:"content,omitempty"`
+	ReasoningContent string            `json:"reasoning_content,omitempty"`
+	ToolCalls        []messageToolCall `json:"tool_calls,omitempty"`
+	ToolCallID       string            `json:"tool_call_id,omitempty"`
 }
 
 type tool struct {
@@ -62,8 +63,9 @@ type response struct {
 	Choices []struct {
 		Message message `json:"message,omitempty"`
 		Delta   struct {
-			Content   string          `json:"content,omitempty"`
-			ToolCalls []deltaToolCall `json:"tool_calls,omitempty"`
+			Content          string          `json:"content,omitempty"`
+			ReasoningContent string          `json:"reasoning_content,omitempty"`
+			ToolCalls        []deltaToolCall `json:"tool_calls,omitempty"`
 		} `json:"delta,omitempty"`
 		FinishReason string `json:"finish_reason,omitempty"`
 	} `json:"choices"`
@@ -151,6 +153,14 @@ func (c *Client) StreamChat(ctx context.Context, chatRequest protocol.ChatReques
 			return fmt.Errorf("parse openai stream chunk: %w", err)
 		}
 		for _, choice := range parsed.Choices {
+			if choice.Delta.ReasoningContent != "" {
+				if err := onEvent(protocol.Event{
+					Type: protocol.EventTypeThinkingDelta,
+					Text: choice.Delta.ReasoningContent,
+				}); err != nil {
+					return err
+				}
+			}
 			if choice.Delta.Content != "" {
 				if err := onEvent(protocol.Event{
 					Type: protocol.EventTypeTextDelta,
@@ -270,8 +280,9 @@ func toMessages(messages []domain.Message) []message {
 			})
 		default:
 			out = append(out, message{
-				Role:    entry.ModelRole(),
-				Content: entry.Content,
+				Role:             entry.ModelRole(),
+				Content:          entry.Content,
+				ReasoningContent: entry.Reasoning,
 			})
 		}
 	}

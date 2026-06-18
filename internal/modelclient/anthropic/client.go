@@ -193,8 +193,18 @@ func (c *Client) handleEvent(eventName, data string, accumulators map[int]*toolU
 		return fmt.Errorf("anthropic error: %s", parsed.Error.Message)
 	}
 
+	if eventName == "" {
+		eventName = parsed.Type
+	}
+
 	switch eventName {
 	case "content_block_start":
+		if parsed.ContentBlock.Type == "text" && parsed.ContentBlock.Text != "" {
+			return onEvent(protocol.Event{
+				Type: protocol.EventTypeTextDelta,
+				Text: parsed.ContentBlock.Text,
+			})
+		}
 		if parsed.ContentBlock.Type == "tool_use" {
 			acc := &toolUseAccumulator{
 				ID:   parsed.ContentBlock.ID,

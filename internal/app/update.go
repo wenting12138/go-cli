@@ -422,6 +422,7 @@ func (m *Model) handleEvent(event any) {
 	case events.ChatThinkingChunk:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.AppendThinking(e.Chunk)
+			chatPage.AppendReasoning(e.Chunk)
 			m.persistActiveChat()
 		}
 	case events.ChatResponseStarted:

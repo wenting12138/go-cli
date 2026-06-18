@@ -187,6 +187,14 @@ func (p *Page) AppendStream(chunk string) {
 	p.markDirty()
 }
 
+func (p *Page) AppendReasoning(chunk string) {
+	if p.modelStreamIndex < 0 || p.modelStreamIndex >= len(p.modelMessages) {
+		return
+	}
+	p.modelMessages[p.modelStreamIndex].Reasoning += chunk
+	p.markDirty()
+}
+
 func (p *Page) FinishStream() {
 	if p.thinkingIndex >= 0 && p.thinkingIndex < len(p.messages) {
 		p.messages[p.thinkingIndex].Content = strings.TrimSpace(p.messages[p.thinkingIndex].Content)
@@ -246,10 +254,12 @@ func (p *Page) BeginAssistantStream(requestID string) {
 		p.streamRequestID = requestID
 	}
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeAssistant, ""))
-	p.modelMessages = append(p.modelMessages, domain.TextMessage("assistant", ""))
 	p.frozenRendered = append(p.frozenRendered, "")
 	p.streamIndex = len(p.messages) - 1
-	p.modelStreamIndex = len(p.modelMessages) - 1
+	if p.modelStreamIndex < 0 || p.modelStreamIndex >= len(p.modelMessages) {
+		p.modelMessages = append(p.modelMessages, domain.TextMessage("assistant", ""))
+		p.modelStreamIndex = len(p.modelMessages) - 1
+	}
 	p.streamRequestID = requestID
 	p.markDirty()
 }
@@ -260,6 +270,10 @@ func (p *Page) BeginThinking(requestID string) {
 	}
 	if p.thinkingIndex >= 0 && p.thinkingIndex < len(p.messages) {
 		return
+	}
+	if p.modelStreamIndex < 0 || p.modelStreamIndex >= len(p.modelMessages) {
+		p.modelMessages = append(p.modelMessages, domain.TextMessage("assistant", ""))
+		p.modelStreamIndex = len(p.modelMessages) - 1
 	}
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeThinking, ""))
 	p.frozenRendered = append(p.frozenRendered, "")
@@ -297,13 +311,12 @@ func (p *Page) SessionID() string {
 }
 
 func (p *Page) AppendToolCall(toolCallID, toolName string, args map[string]any) {
-	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeTool, formatToolCall(toolCallID, toolName, args)))
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeTool, formatToolCall(toolName, args)))
 	p.modelMessages = append(p.modelMessages, domain.ToolCallMessage(toolCallID, toolName, args))
 	p.markDirty()
 }
 
 func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
-	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeTool, formatToolResult(toolCallID, toolName, result)))
 	p.modelMessages = append(p.modelMessages, domain.ToolResultMessage(toolCallID, toolName, result))
 	p.markDirty()
 }
@@ -324,12 +337,13 @@ func (p *Page) renderMessage(width int, index int, message chatui.Message) strin
 	contentWidth := max(20, width)
 	content := lipgloss.NewStyle().Width(contentWidth).Render(message.Content)
 	if message.Type == chatui.TypeAssistant {
+		renderWidth := max(1, contentWidth-assistantStyle.GetHorizontalFrameSize())
 		if index == p.streamIndex {
-			content = assistantStyle.Width(contentWidth - assistantStyle.GetHorizontalFrameSize()).Render(message.Content)
+			content = assistantStyle.Width(renderWidth).Render(message.Content)
 		} else if index < len(p.frozenRendered) && p.frozenRendered[index] != "" {
-			content = assistantStyle.Width(contentWidth - assistantStyle.GetHorizontalFrameSize()).Render(p.frozenRendered[index])
+			content = assistantStyle.Width(renderWidth).Render(p.frozenRendered[index])
 		} else {
-			content = assistantStyle.Width(contentWidth - assistantStyle.GetHorizontalFrameSize()).Render(renderAssistantMarkdown(contentWidth, message.Content))
+			content = assistantStyle.Width(renderWidth).Render(renderAssistantMarkdown(renderWidth, message.Content))
 		}
 	}
 	if message.Type == chatui.TypeThinking {
@@ -340,7 +354,7 @@ func (p *Page) renderMessage(width int, index int, message chatui.Message) strin
 		}
 	}
 	if message.Type == chatui.TypeTool {
-		content = toolBodyStyle.Width(max(1, contentWidth-toolBodyStyle.GetHorizontalFrameSize())).Render(message.Content)
+		content = toolBodyStyle.Width(max(1, contentWidth-toolBodyStyle.GetHorizontalFrameSize())).Render(renderToolCard(contentWidth, message.Content))
 	}
 	if message.Type == chatui.TypeUser {
 		content = userStyle.Width(max(1, contentWidth-userStyle.GetHorizontalFrameSize())).Render(message.Content)
@@ -377,11 +391,14 @@ func formatArgs(args map[string]any) string {
 	return string(data)
 }
 
-func formatToolCall(toolCallID, toolName string, args map[string]any) string {
+func formatToolCall(toolName string, args map[string]any) string {
+	target := formatToolTarget(toolName, args)
+	if target == "" {
+		return fmt.Sprintf("tool: %s", toolName)
+	}
 	return strings.Join([]string{
-		fmt.Sprintf("call: %s", toolName),
-		fmt.Sprintf("id: %s", toolCallID),
-		fmt.Sprintf("args: %s", formatArgs(args)),
+		fmt.Sprintf("tool: %s", toolName),
+		fmt.Sprintf("target: %s", target),
 	}, "\n")
 }
 
@@ -395,6 +412,7 @@ func formatToolResult(toolCallID, toolName, result string) string {
 
 func renderAssistantMarkdown(width int, content string) string {
 	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStandardStyle("dracula"),
 		glamour.WithWordWrap(width),
 	)
 	if err != nil {
@@ -407,6 +425,81 @@ func renderAssistantMarkdown(width int, content string) string {
 	}
 
 	return strings.TrimRight(out, "\n")
+}
+
+func renderToolCard(width int, content string) string {
+	lines := strings.Split(strings.TrimSpace(content), "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+
+	title := "Tool"
+	body := ""
+	if name := strings.TrimSpace(strings.TrimPrefix(lines[0], "tool:")); name != "" && name != lines[0] {
+		title = name
+	} else {
+		body = strings.TrimSpace(lines[0])
+	}
+
+	if len(lines) > 1 {
+		target := strings.TrimSpace(strings.TrimPrefix(lines[1], "target:"))
+		if target != "" && target != lines[1] {
+			body = target
+		}
+	}
+
+	card := []string{
+		toolLabelStyle.Render(title),
+	}
+	if body != "" {
+		card = append(card, lipgloss.NewStyle().Foreground(lipgloss.Color("250")).Render(body))
+	}
+
+	return lipgloss.NewStyle().Width(max(1, width-toolBodyStyle.GetHorizontalFrameSize())).Render(strings.Join(card, "\n"))
+}
+
+func formatToolTarget(toolName string, args map[string]any) string {
+	switch toolName {
+	case "read_file", "write_text_file", "edit_file_lines":
+		return stringArg(args, "path")
+	case "grep_files":
+		path := stringArg(args, "path")
+		pattern := stringArg(args, "pattern")
+		if path != "" && pattern != "" {
+			return path + " :: " + pattern
+		}
+		if path != "" {
+			return path
+		}
+		return pattern
+	case "execute_shell_command":
+		path := stringArg(args, "path")
+		command := stringArg(args, "command")
+		if path != "" && command != "" {
+			return path + " :: " + command
+		}
+		if command != "" {
+			return command
+		}
+		return path
+	case "active_model":
+		return "current model"
+	case "time_now":
+		return "local clock"
+	default:
+		if path := stringArg(args, "path"); path != "" {
+			return path
+		}
+		if name := stringArg(args, "file"); name != "" {
+			return name
+		}
+		return ""
+	}
+}
+
+func stringArg(args map[string]any, key string) string {
+	value, _ := args[key].(string)
+	return strings.TrimSpace(value)
 }
 
 func renderThinkingCollapsed(width int, content string) string {
@@ -482,9 +575,7 @@ func toUIMessages(messages []domain.Message) []chatui.Message {
 		case domain.MessageTypeCompact:
 			out = append(out, chatui.TextMessage(chatui.TypeSystem, message.Content))
 		case domain.MessageTypeToolCall:
-			out = append(out, chatui.TextMessage(chatui.TypeTool, formatToolCall(message.ToolCallID, message.ToolName, message.Args)))
-		case domain.MessageTypeToolResult:
-			out = append(out, chatui.TextMessage(chatui.TypeTool, formatToolResult(message.ToolCallID, message.ToolName, message.Result)))
+			out = append(out, chatui.TextMessage(chatui.TypeTool, formatToolCall(message.ToolName, message.Args)))
 		default:
 			out = append(out, chatui.TextMessage(toUIType(message.Role), message.Content))
 		}

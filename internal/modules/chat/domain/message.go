@@ -12,6 +12,7 @@ const (
 type Message struct {
 	Role       string
 	Content    string
+	Reasoning  string
 	Type       string
 	ToolName   string
 	ToolCallID string
@@ -73,6 +74,12 @@ func (m Message) ModelRole() string {
 func (m Message) ModelContent() string {
 	switch m.Type {
 	case "", MessageTypeText:
+		if m.Reasoning != "" {
+			if m.Content != "" {
+				return m.Reasoning + "\n" + m.Content
+			}
+			return m.Reasoning
+		}
 		return m.Content
 	case MessageTypeToolCall:
 		return mustJSON(map[string]any{
