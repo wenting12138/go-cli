@@ -6,11 +6,13 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/glamour/v2"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"go-cli/internal/config"
 	"go-cli/internal/modules/chat/domain"
+	chatui "go-cli/internal/modules/chat/ui"
 	"go-cli/internal/modules/shared"
 )
 
@@ -36,7 +38,7 @@ var (
 )
 
 type Page struct {
-	messages         []domain.Message
+	messages         []chatui.Message
 	modelMessages    []domain.Message
 	model            config.ModelConfig
 	sessionID        string
@@ -50,9 +52,9 @@ func NewPage(model config.ModelConfig) *Page {
 		model:            model,
 		streamIndex:      -1,
 		modelStreamIndex: -1,
-		messages: []domain.Message{
-			domain.TextMessage("system", "Chat CLI ready. Type a message or use /resume or /models."),
-			domain.TextMessage("assistant", fmt.Sprintf("This is the main conversation page. Active model: %s/%s, context=%s. Use /resume to open the session recovery page.", model.Provider, model.Name, formatContextWindow(model.ContextWindow))),
+		messages: []chatui.Message{
+			chatui.TextMessage(chatui.TypeSystem, "Chat CLI ready. Type a message or use /resume or /models."),
+			chatui.TextMessage(chatui.TypeAssistant, fmt.Sprintf("This is the main conversation page. Active model: %s/%s, context=%s. Use /resume to open the session recovery page.", model.Provider, model.Name, formatContextWindow(model.ContextWindow))),
 		},
 	}
 }
@@ -77,14 +79,13 @@ func (p *Page) HandleInput(text string) tea.Cmd {
 	if p.sessionID == "" {
 		p.sessionID = fmt.Sprintf("session-%d", time.Now().UnixNano())
 	}
-	message := domain.TextMessage("user", text)
-	p.messages = append(p.messages, message)
-	p.modelMessages = append(p.modelMessages, message)
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeUser, text))
+	p.modelMessages = append(p.modelMessages, domain.TextMessage("user", text))
 	return nil
 }
 
 func (p *Page) ApplyUpdate(msg shared.PageUpdatedMsg) {
-	message, ok := msg.Payload.(domain.Message)
+	message, ok := msg.Payload.(chatui.Message)
 	if !ok {
 		return
 	}
@@ -92,21 +93,21 @@ func (p *Page) ApplyUpdate(msg shared.PageUpdatedMsg) {
 }
 
 func (p *Page) SystemMessage(text string) {
-	p.messages = append(p.messages, domain.TextMessage("system", text))
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, text))
 }
 
 func (p *Page) LoadSession(session domain.Session) {
 	p.sessionID = session.ID
-	p.messages = append([]domain.Message{
-		domain.TextMessage("system", fmt.Sprintf("Resumed session %s: %s", session.ID, session.Title)),
-	}, session.Messages...)
+	p.messages = append([]chatui.Message{
+		chatui.TextMessage(chatui.TypeSystem, fmt.Sprintf("Resumed session %s: %s", session.ID, session.Title)),
+	}, toUIMessages(session.Messages)...)
 }
 
-func (p *Page) RestoreSession(sessionID, title string, uiMessages, modelMessages []domain.Message) {
+func (p *Page) RestoreSession(sessionID, title string, uiMessages []chatui.Message, modelMessages []domain.Message) {
 	p.sessionID = sessionID
-	p.messages = append([]domain.Message{
-		domain.TextMessage("system", fmt.Sprintf("Resumed session %s: %s", sessionID, title)),
-	}, cloneMessages(uiMessages)...)
+	p.messages = append([]chatui.Message{
+		chatui.TextMessage(chatui.TypeSystem, fmt.Sprintf("Resumed session %s: %s", sessionID, title)),
+	}, chatui.CloneMessages(uiMessages)...)
 	p.modelMessages = cloneMessages(modelMessages)
 	p.streamIndex = -1
 	p.modelStreamIndex = -1
@@ -115,11 +116,7 @@ func (p *Page) RestoreSession(sessionID, title string, uiMessages, modelMessages
 
 func (p *Page) SetModel(model config.ModelConfig) {
 	p.model = model
-	p.messages = append(p.messages, domain.Message{
-		Role:    "system",
-		Type:    domain.MessageTypeText,
-		Content: fmt.Sprintf("Switched model to %s (%s/%s), context=%s.", model.ID, model.Provider, model.Name, formatContextWindow(model.ContextWindow)),
-	})
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, fmt.Sprintf("Switched model to %s (%s/%s), context=%s.", model.ID, model.Provider, model.Name, formatContextWindow(model.ContextWindow))))
 }
 
 func (p *Page) AppendStream(chunk string) {
@@ -155,19 +152,15 @@ func (p *Page) FailStream(err string) {
 	p.streamIndex = -1
 	p.modelStreamIndex = -1
 	p.streamRequestID = ""
-	p.messages = append(p.messages, domain.Message{
-		Role:    "system",
-		Type:    domain.MessageTypeText,
-		Content: err,
-	})
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, err))
 }
 
 func (p *Page) SnapshotMessages() []domain.Message {
 	return cloneMessages(p.modelMessages)
 }
 
-func (p *Page) UISnapshotMessages() []domain.Message {
-	return cloneMessages(p.messages)
+func (p *Page) UISnapshotMessages() []chatui.Message {
+	return chatui.CloneMessages(p.messages)
 }
 
 func (p *Page) BeginRequest(requestID string) {
@@ -179,9 +172,8 @@ func (p *Page) BeginAssistantStream(requestID string) {
 	if p.streamRequestID == "" {
 		p.streamRequestID = requestID
 	}
-	message := domain.TextMessage("assistant", "")
-	p.messages = append(p.messages, message)
-	p.modelMessages = append(p.modelMessages, message)
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeAssistant, ""))
+	p.modelMessages = append(p.modelMessages, domain.TextMessage("assistant", ""))
 	p.streamIndex = len(p.messages) - 1
 	p.modelStreamIndex = len(p.modelMessages) - 1
 	p.streamRequestID = requestID
@@ -208,64 +200,36 @@ func (p *Page) SessionID() string {
 }
 
 func (p *Page) AppendToolCall(toolCallID, toolName string, args map[string]any) {
-	message := domain.ToolCallMessage(toolCallID, toolName, args)
-	p.messages = append(p.messages, message)
-	p.modelMessages = append(p.modelMessages, message)
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeTool, formatToolCall(toolCallID, toolName, args)))
+	p.modelMessages = append(p.modelMessages, domain.ToolCallMessage(toolCallID, toolName, args))
 }
 
 func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
-	uiMessage := domain.ToolResultMessage(toolCallID, toolName, result)
-	p.messages = append(p.messages, uiMessage)
-	p.modelMessages = append(p.modelMessages, uiMessage)
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeTool, formatToolResult(toolCallID, toolName, result)))
+	p.modelMessages = append(p.modelMessages, domain.ToolResultMessage(toolCallID, toolName, result))
 }
 
-func renderMessage(width int, message domain.Message) string {
-	switch message.Type {
-	case domain.MessageTypeToolCall:
-		return renderToolCall(width, message)
-	case domain.MessageTypeToolResult:
-		return renderToolResult(width, message)
-	}
-
+func renderMessage(width int, message chatui.Message) string {
 	label := systemStyle.Render("system")
-	switch message.Role {
-	case "user":
+	switch message.Type {
+	case chatui.TypeUser:
 		label = userStyle.Render("you")
-	case "assistant":
+	case chatui.TypeAssistant:
 		label = assistantStyle.Render("assistant")
+	case chatui.TypeTool:
+		label = toolLabelStyle.Render("tool")
 	}
 
-	content := lipgloss.NewStyle().
-		Width(max(20, width)).
-		Render(message.Content)
+	contentWidth := max(20, width)
+	content := lipgloss.NewStyle().Width(contentWidth).Render(message.Content)
+	if message.Type == chatui.TypeAssistant {
+		content = renderAssistantMarkdown(contentWidth, message.Content)
+	}
+	if message.Type == chatui.TypeTool {
+		content = toolBodyStyle.Width(contentWidth).Render(message.Content)
+	}
 
 	return fmt.Sprintf("%s\n%s", label, content)
-}
-
-func renderToolCall(width int, message domain.Message) string {
-	body := []string{
-		fmt.Sprintf("name: %s", message.ToolName),
-		fmt.Sprintf("id: %s", message.ToolCallID),
-		fmt.Sprintf("args: %s", formatArgs(message.Args)),
-	}
-	return fmt.Sprintf(
-		"%s\n%s",
-		toolLabelStyle.Render("tool call"),
-		toolBodyStyle.Width(max(20, width)).Render(strings.Join(body, "\n")),
-	)
-}
-
-func renderToolResult(width int, message domain.Message) string {
-	body := []string{
-		fmt.Sprintf("name: %s", message.ToolName),
-		fmt.Sprintf("id: %s", message.ToolCallID),
-		fmt.Sprintf("result: %s", message.Result),
-	}
-	return fmt.Sprintf(
-		"%s\n%s",
-		toolLabelStyle.Render("tool result"),
-		toolBodyStyle.Width(max(20, width)).Render(strings.Join(body, "\n")),
-	)
 }
 
 func max(a, b int) int {
@@ -291,6 +255,38 @@ func formatArgs(args map[string]any) string {
 		return "{}"
 	}
 	return string(data)
+}
+
+func formatToolCall(toolCallID, toolName string, args map[string]any) string {
+	return strings.Join([]string{
+		fmt.Sprintf("call: %s", toolName),
+		fmt.Sprintf("id: %s", toolCallID),
+		fmt.Sprintf("args: %s", formatArgs(args)),
+	}, "\n")
+}
+
+func formatToolResult(toolCallID, toolName, result string) string {
+	return strings.Join([]string{
+		fmt.Sprintf("result: %s", toolName),
+		fmt.Sprintf("id: %s", toolCallID),
+		fmt.Sprintf("content: %s", result),
+	}, "\n")
+}
+
+func renderAssistantMarkdown(width int, content string) string {
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithWordWrap(width),
+	)
+	if err != nil {
+		return lipgloss.NewStyle().Width(width).Render(content)
+	}
+
+	out, err := renderer.Render(content)
+	if err != nil {
+		return lipgloss.NewStyle().Width(width).Render(content)
+	}
+
+	return strings.TrimRight(out, "\n")
 }
 
 func (p *Page) SessionTitle() string {
@@ -319,4 +315,30 @@ func cloneMessages(messages []domain.Message) []domain.Message {
 		out = append(out, cloned)
 	}
 	return out
+}
+
+func toUIMessages(messages []domain.Message) []chatui.Message {
+	out := make([]chatui.Message, 0, len(messages))
+	for _, message := range messages {
+		switch message.Type {
+		case domain.MessageTypeToolCall:
+			out = append(out, chatui.TextMessage(chatui.TypeTool, formatToolCall(message.ToolCallID, message.ToolName, message.Args)))
+		case domain.MessageTypeToolResult:
+			out = append(out, chatui.TextMessage(chatui.TypeTool, formatToolResult(message.ToolCallID, message.ToolName, message.Result)))
+		default:
+			out = append(out, chatui.TextMessage(toUIType(message.Role), message.Content))
+		}
+	}
+	return out
+}
+
+func toUIType(role string) string {
+	switch role {
+	case "user":
+		return chatui.TypeUser
+	case "assistant":
+		return chatui.TypeAssistant
+	default:
+		return chatui.TypeSystem
+	}
 }

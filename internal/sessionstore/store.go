@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"go-cli/internal/modules/chat/domain"
+	"go-cli/internal/modules/chat/ui"
 )
 
 const (
@@ -29,7 +30,7 @@ type Summary struct {
 type SessionData struct {
 	ID            string
 	Title         string
-	UIMessages    []domain.Message
+	UIMessages    []ui.Message
 	ModelMessages []domain.Message
 	UpdatedAt     time.Time
 }
@@ -39,10 +40,10 @@ type Store struct {
 }
 
 type uiFile struct {
-	ID        string           `json:"id"`
-	Title     string           `json:"title"`
-	UpdatedAt time.Time        `json:"updated_at"`
-	Messages  []domain.Message `json:"messages"`
+	ID        string       `json:"id"`
+	Title     string       `json:"title"`
+	UpdatedAt time.Time    `json:"updated_at"`
+	Messages  []ui.Message `json:"messages"`
 }
 
 type modelFile struct {
@@ -82,7 +83,7 @@ func (s *Store) Save(data SessionData) error {
 		ID:        data.ID,
 		Title:     data.Title,
 		UpdatedAt: data.UpdatedAt,
-		Messages:  cloneMessages(data.UIMessages),
+		Messages:  ui.CloneMessages(data.UIMessages),
 	}
 	modelPayload := modelFile{
 		ID:        data.ID,
@@ -116,7 +117,7 @@ func (s *Store) Load(sessionID string) (SessionData, error) {
 	return SessionData{
 		ID:            uiPayload.ID,
 		Title:         uiPayload.Title,
-		UIMessages:    cloneMessages(uiPayload.Messages),
+		UIMessages:    ui.CloneMessages(uiPayload.Messages),
 		ModelMessages: cloneMessages(modelPayload.Messages),
 		UpdatedAt:     uiPayload.UpdatedAt,
 	}, nil
@@ -192,9 +193,9 @@ func cloneMessages(messages []domain.Message) []domain.Message {
 	return out
 }
 
-func preview(messages []domain.Message) string {
+func preview(messages []ui.Message) string {
 	for _, message := range messages {
-		if message.Role == "user" && strings.TrimSpace(message.Content) != "" {
+		if message.Type == ui.TypeUser && strings.TrimSpace(message.Content) != "" {
 			text := strings.TrimSpace(message.Content)
 			if len(text) > 56 {
 				return text[:56] + "..."

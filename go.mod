@@ -3,6 +3,7 @@ module go-cli
 go 1.22.2
 
 require (
+	charm.land/glamour/v2 v2.1.0
 	github.com/charmbracelet/bubbles v0.20.0
 	github.com/charmbracelet/bubbletea v1.1.0
 	github.com/charmbracelet/lipgloss v0.13.0
