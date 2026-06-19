@@ -8,6 +8,7 @@ import (
 
 	"go-cli/internal/agent/react"
 	"go-cli/internal/agent/tools"
+	"go-cli/internal/agentmode"
 	"go-cli/internal/config"
 	"go-cli/internal/eventbus"
 	"go-cli/internal/events"
@@ -28,12 +29,16 @@ func New(bus *eventbus.Bus) *Service {
 	}
 }
 
-func (s *Service) StartStream(model config.ModelConfig, messages []domain.Message) error {
+func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, messages []domain.Message) error {
 	client, err := modelclient.New(model)
 	if err != nil {
 		return err
 	}
-	agent := react.New(client, model, tools.Build(model), s.promptBuilder)
+	systemPrompt, err := s.BuildSystemPrompt(model, mode)
+	if err != nil {
+		return err
+	}
+	agent := react.New(client, model, tools.Build(model, mode), s.promptBuilder, systemPrompt)
 
 	requestID := fmt.Sprintf("chat-%d", time.Now().UnixNano())
 	s.bus.Publish(events.ChatStreamStarted{RequestID: requestID})
@@ -101,15 +106,16 @@ func (s *Service) StartStream(model config.ModelConfig, messages []domain.Messag
 	return nil
 }
 
-func (s *Service) BuildSystemPrompt(model config.ModelConfig) (string, error) {
+func (s *Service) BuildSystemPrompt(model config.ModelConfig, mode agentmode.Mode) (string, error) {
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("resolve working directory: %w", err)
 	}
 	return s.promptBuilder.Build(prompt.Input{
 		Model:      model,
+		Mode:       mode,
 		WorkingDir: workingDir,
-		Tools:      react.ToolDefinitions(tools.Build(model)),
+		Tools:      react.ToolDefinitions(tools.Build(model, mode)),
 	})
 }
 

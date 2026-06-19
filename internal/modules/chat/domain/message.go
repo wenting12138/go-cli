@@ -3,10 +3,11 @@ package domain
 import "encoding/json"
 
 const (
-	MessageTypeText       = "text"
-	MessageTypeToolCall   = "tool_call"
-	MessageTypeToolResult = "tool_result"
-	MessageTypeCompact    = "compact_boundary"
+	MessageTypeText         = "text"
+	MessageTypeToolCall     = "tool_call"
+	MessageTypeToolResult   = "tool_result"
+	MessageTypeCompact      = "compact_boundary"
+	MessageTypeApprovedPlan = "approved_plan"
 )
 
 type Message struct {
@@ -17,6 +18,7 @@ type Message struct {
 	Type               string
 	ToolName           string
 	ToolCallID         string
+	PlanPath           string
 	Args               map[string]any
 	Result             string
 }
@@ -63,6 +65,15 @@ func CompactBoundaryMessage(content string) Message {
 	}
 }
 
+func ApprovedPlanMessage(path, content string) Message {
+	return Message{
+		Role:     "system",
+		Type:     MessageTypeApprovedPlan,
+		PlanPath: path,
+		Content:  content,
+	}
+}
+
 func (m Message) ModelRole() string {
 	switch m.Role {
 	case "assistant", "user", "system", "tool":
@@ -95,6 +106,12 @@ func (m Message) ModelContent() string {
 			"tool_call_id": m.ToolCallID,
 			"tool":         m.ToolName,
 			"result":       m.Result,
+		})
+	case MessageTypeApprovedPlan:
+		return mustJSON(map[string]any{
+			"type":      MessageTypeApprovedPlan,
+			"plan_path": m.PlanPath,
+			"content":   m.Content,
 		})
 	default:
 		if m.Content != "" {

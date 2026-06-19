@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"go-cli/internal/agentmode"
 	"go-cli/internal/config"
 	"go-cli/internal/modelclient/protocol"
 )
@@ -17,6 +18,7 @@ const DynamicBoundary = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"
 
 type Input struct {
 	Model      config.ModelConfig
+	Mode       agentmode.Mode
 	WorkingDir string
 	Tools      []protocol.ToolDefinition
 }
@@ -109,7 +111,7 @@ func defaultSections() []Section {
 		},
 		{
 			Name:    "workflow",
-			Compute: func(Input) (string, error) { return workflowSection(), nil },
+			Compute: func(input Input) (string, error) { return workflowSection(input.Mode), nil },
 		},
 		{
 			Name:    "repo_guidance",
@@ -169,7 +171,19 @@ func systemSection() string {
 `)
 }
 
-func workflowSection() string {
+func workflowSection(mode agentmode.Mode) string {
+	if mode == agentmode.Plan {
+		return strings.TrimSpace(`
+# Workflow
+- You are in plan mode.
+- Explore the codebase and design the implementation before making changes.
+- Do not propose speculative code edits as if they were already applied.
+- Prefer read-only tools to reduce uncertainty.
+- End with a concrete implementation plan, critical files, and verification steps.
+- When the plan is ready for review, call exit_plan_mode instead of asking for approval in plain text.
+`)
+	}
+
 	return strings.TrimSpace(`
 # Workflow
 - Read relevant code before changing it.

@@ -49,9 +49,18 @@ type Page struct {
 
 type toolHit struct {
 	messageIndex int
+	toolName     string
 	startLine    int
 	endLine      int
 }
+
+type ToolAction string
+
+const (
+	ToolActionNone        ToolAction = ""
+	ToolActionPlanApprove ToolAction = "plan_approve"
+	ToolActionPlanReject  ToolAction = "plan_reject"
+)
 
 func NewPage(model config.ModelConfig) *Page {
 	return &Page{
@@ -105,6 +114,7 @@ func (p *Page) Content(width int) string {
 		if message.Type == chatui.TypeTool {
 			p.toolHits = append(p.toolHits, toolHit{
 				messageIndex: i,
+				toolName:     message.ToolName,
 				startLine:    startLine,
 				endLine:      lineOffset - 1,
 			})
@@ -275,6 +285,13 @@ func (p *Page) SessionID() string {
 	return p.sessionID
 }
 
+func (p *Page) EnsureSessionID() string {
+	if p.sessionID == "" {
+		p.sessionID = fmt.Sprintf("session-%d", time.Now().UnixNano())
+	}
+	return p.sessionID
+}
+
 func (p *Page) AppendToolCall(toolCallID, toolName string, args map[string]any) {
 	p.messages = append(p.messages, chatui.ToolMessage(toolCallID, toolName, formatToolCall(toolName, args), buildToolMeta(toolName, args, "")))
 	p.modelMessages = append(p.modelMessages, domain.ToolCallMessage(toolCallID, toolName, args))
@@ -284,6 +301,16 @@ func (p *Page) AppendToolCall(toolCallID, toolName string, args map[string]any) 
 func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
 	p.modelMessages = append(p.modelMessages, domain.ToolResultMessage(toolCallID, toolName, result))
 	p.applyToolResultToUI(toolCallID, toolName, result)
+	p.markDirty()
+}
+
+func (p *Page) AppendApprovedPlan(path, content string) {
+	trimmed := strings.TrimSpace(content)
+	if trimmed == "" {
+		return
+	}
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, fmt.Sprintf("Approved plan loaded from %s.", path)))
+	p.modelMessages = append(p.modelMessages, domain.ApprovedPlanMessage(path, trimmed))
 	p.markDirty()
 }
 
@@ -341,6 +368,9 @@ func (p *Page) ToggleToolCardAtLine(line int) bool {
 		if line < hit.startLine || line > hit.endLine {
 			continue
 		}
+		if hit.toolName == "exit_plan_mode" {
+			return false
+		}
 		if hit.messageIndex < 0 || hit.messageIndex >= len(p.messages) {
 			return false
 		}
@@ -353,4 +383,34 @@ func (p *Page) ToggleToolCardAtLine(line int) bool {
 		return true
 	}
 	return false
+}
+
+func (p *Page) ToolNameAtLine(line int) string {
+	for _, hit := range p.toolHits {
+		if line >= hit.startLine && line <= hit.endLine {
+			return hit.toolName
+		}
+	}
+	return ""
+}
+
+func (p *Page) ToolActionAtLine(line int) ToolAction {
+	for _, hit := range p.toolHits {
+		if line < hit.startLine || line > hit.endLine {
+			continue
+		}
+		if hit.toolName != "exit_plan_mode" {
+			return ToolActionNone
+		}
+		relative := line - hit.startLine
+		switch relative {
+		case 2:
+			return ToolActionPlanApprove
+		case 3:
+			return ToolActionPlanReject
+		default:
+			return ToolActionNone
+		}
+	}
+	return ToolActionNone
 }

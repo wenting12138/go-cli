@@ -22,6 +22,10 @@ type Tool interface {
 	Run(ctx context.Context, args map[string]any) (string, error)
 }
 
+type InterruptingTool interface {
+	InterruptsTurn() bool
+}
+
 type Hooks struct {
 	OnToolStart         func(name, toolCallID string, args map[string]any)
 	OnToolResult        func(name, toolCallID, result string)
@@ -37,6 +41,7 @@ type Agent struct {
 	model         config.ModelConfig
 	tools         map[string]Tool
 	promptBuilder *prompt.Builder
+	staticPrompt  string
 	maxSteps      int
 }
 
@@ -45,7 +50,7 @@ type collectResult struct {
 	ToolCalls  []protocol.ToolCall
 }
 
-func New(client modelclient.Client, model config.ModelConfig, tools []Tool, promptBuilder *prompt.Builder) *Agent {
+func New(client modelclient.Client, model config.ModelConfig, tools []Tool, promptBuilder *prompt.Builder, systemPrompt string) *Agent {
 	indexed := make(map[string]Tool, len(tools))
 	for _, tool := range tools {
 		indexed[tool.Name()] = tool
@@ -59,6 +64,7 @@ func New(client modelclient.Client, model config.ModelConfig, tools []Tool, prom
 		model:         model,
 		tools:         indexed,
 		promptBuilder: promptBuilder,
+		staticPrompt:  systemPrompt,
 		maxSteps:      100,
 	}
 }
@@ -152,6 +158,10 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 				continue
 			}
 
+			if interrupting, ok := tool.(InterruptingTool); ok && interrupting.InterruptsTurn() {
+				return nil
+			}
+
 			toolResult, err := tool.Run(ctx, args)
 			if err != nil {
 				toolResult = fmt.Sprintf("tool error: %s", err)
@@ -211,12 +221,16 @@ func (a *Agent) collect(ctx context.Context, messages []domain.Message, onThinki
 }
 
 func (a *Agent) systemPrompt() (string, error) {
+	if strings.TrimSpace(a.staticPrompt) != "" {
+		return a.staticPrompt, nil
+	}
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("resolve working directory: %w", err)
 	}
 	return a.promptBuilder.Build(prompt.Input{
 		Model:      a.model,
+		Mode:       "",
 		WorkingDir: workingDir,
 		Tools:      a.toolDefinitions(),
 	})
