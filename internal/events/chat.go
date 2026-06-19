@@ -47,5 +47,6 @@ type ChatToolCallCompleted struct {
 	RequestID  string
 	Tool       string
 	ToolCallID string
+	Args       map[string]any
 	Result     string
 }

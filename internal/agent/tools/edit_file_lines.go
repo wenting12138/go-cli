@@ -118,6 +118,7 @@ func (t EditFileLines) Run(ctx context.Context, args map[string]any) (string, er
 
 	before := append([]string(nil), lines[:startLine-1]...)
 	after := append([]string(nil), lines[endLine:]...)
+	replacedBlock := append([]string(nil), lines[startLine-1:endLine]...)
 
 	replacement := splitPreserveEmpty(newLines)
 	updated := append(before, replacement...)
@@ -132,12 +133,15 @@ func (t EditFileLines) Run(ctx context.Context, args map[string]any) (string, er
 		return "", fmt.Errorf("write file: %w", err)
 	}
 
+	replacedText := strings.Join(replacedBlock, "\n")
+
 	return fmt.Sprintf(
-		"path: %s\nreplaced_lines: %d-%d\ninserted_lines: %d",
+		"path: %s\nreplaced_lines: %d-%d\ninserted_lines: %d\nold_lines:\n%s",
 		resolvedPath,
 		startLine,
 		endLine,
 		len(replacement),
+		replacedText,
 	), nil
 }
 

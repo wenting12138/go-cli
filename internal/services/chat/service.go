@@ -41,9 +41,11 @@ func (s *Service) StartStream(model config.ModelConfig, messages []domain.Messag
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 		defer cancel()
+		toolArgsByID := make(map[string]map[string]any)
 
 		err := agent.Run(ctx, messages, react.Hooks{
 			OnToolStart: func(name, toolCallID string, args map[string]any) {
+				toolArgsByID[toolCallID] = cloneArgs(args)
 				s.bus.Publish(events.ChatToolCallStarted{
 					RequestID:  requestID,
 					Tool:       name,
@@ -56,6 +58,7 @@ func (s *Service) StartStream(model config.ModelConfig, messages []domain.Messag
 					RequestID:  requestID,
 					Tool:       name,
 					ToolCallID: toolCallID,
+					Args:       cloneArgs(toolArgsByID[toolCallID]),
 					Result:     result,
 				})
 			},
