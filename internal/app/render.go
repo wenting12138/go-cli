@@ -122,8 +122,8 @@ func (m Model) renderTypingIndicator() string {
 	}
 	return lipgloss.NewStyle().
 		Width(m.contentWidth()).
-		PaddingLeft(1).
-		Render(strings.Join(parts, " "))
+		PaddingLeft(2).
+		Render(strings.Join(parts, "  "))
 }
 
 func (m Model) renderSlashMenu() string {

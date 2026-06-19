@@ -92,10 +92,9 @@ var (
 				Foreground(lipgloss.Color("242")).
 				Padding(0, 1)
 	typingIndicatorStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("244"))
+				Foreground(lipgloss.Color("239"))
 	typingIndicatorActiveStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("86")).
-					Bold(true)
+					Foreground(lipgloss.Color("252"))
 )
 
 type Model struct {
