@@ -43,7 +43,14 @@ type Page struct {
 	cachedContent    string
 	frozenRendered   []string
 	frozenWidth      int
+	toolHits         []toolHit
 	dirty            bool
+}
+
+type toolHit struct {
+	messageIndex int
+	startLine    int
+	endLine      int
 }
 
 func NewPage(model config.ModelConfig) *Page {
@@ -77,11 +84,31 @@ func (p *Page) Content(width int) string {
 	}
 
 	var lines []string
+	lineOffset := 0
+	p.toolHits = p.toolHits[:0]
 	for i, message := range p.messages {
 		if i > 0 && needsReplyDivider(p.messages[i-1], message) {
-			lines = append(lines, renderReplyDivider(width))
+			divider := renderReplyDivider(width)
+			if len(lines) > 0 {
+				lineOffset++
+			}
+			lines = append(lines, divider)
+			lineOffset += lipgloss.Height(divider)
 		}
-		lines = append(lines, p.renderMessage(width, i, message))
+		rendered := p.renderMessage(width, i, message)
+		if len(lines) > 0 {
+			lineOffset++
+		}
+		startLine := lineOffset
+		lines = append(lines, rendered)
+		lineOffset += lipgloss.Height(rendered)
+		if message.Type == chatui.TypeTool {
+			p.toolHits = append(p.toolHits, toolHit{
+				messageIndex: i,
+				startLine:    startLine,
+				endLine:      lineOffset - 1,
+			})
+		}
 	}
 	p.cachedWidth = width
 	p.cachedContent = strings.Join(lines, "\n\n")
@@ -307,4 +334,23 @@ func (p *Page) renderMessage(width int, index int, message chatui.Message) strin
 
 func (p *Page) markDirty() {
 	p.dirty = true
+}
+
+func (p *Page) ToggleToolCardAtLine(line int) bool {
+	for _, hit := range p.toolHits {
+		if line < hit.startLine || line > hit.endLine {
+			continue
+		}
+		if hit.messageIndex < 0 || hit.messageIndex >= len(p.messages) {
+			return false
+		}
+		if p.messages[hit.messageIndex].Meta == nil {
+			p.messages[hit.messageIndex].Meta = map[string]any{}
+		}
+		expanded, _ := p.messages[hit.messageIndex].Meta["expanded"].(bool)
+		p.messages[hit.messageIndex].Meta["expanded"] = !expanded
+		p.markDirty()
+		return true
+	}
+	return false
 }

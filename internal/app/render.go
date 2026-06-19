@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
 	"go-cli/internal/modules/chat"
@@ -179,4 +180,23 @@ func roughTokens(text string) int {
 		return 1
 	}
 	return tokens
+}
+
+func (m Model) viewportLineAtMouse(msg tea.MouseMsg) (int, bool) {
+	const appPaddingTop = 1
+	const appPaddingLeft = 2
+
+	viewportTop := appPaddingTop + lipgloss.Height(m.renderHeader())
+	viewportBottom := viewportTop + m.viewport.Height
+	if msg.Y < viewportTop || msg.Y >= viewportBottom {
+		return 0, false
+	}
+
+	viewportLeft := appPaddingLeft
+	viewportRight := viewportLeft + m.viewport.Width
+	if msg.X < viewportLeft || msg.X >= viewportRight {
+		return 0, false
+	}
+
+	return m.viewport.YOffset + (msg.Y - viewportTop), true
 }

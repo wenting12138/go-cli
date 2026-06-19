@@ -11,6 +11,8 @@ import (
 )
 
 var (
+	toolHintStyle = lipgloss.NewStyle().
+			Foreground(lipgloss.Color("244"))
 	toolLabelStyle = lipgloss.NewStyle().
 			Foreground(lipgloss.Color("220")).
 			Bold(true)
@@ -33,6 +35,8 @@ var (
 				Foreground(lipgloss.Color("203")).
 				Bold(true)
 )
+
+const toolPreviewLineLimit = 12
 
 func formatArgs(args map[string]any) string {
 	if len(args) == 0 {
@@ -83,6 +87,7 @@ func renderToolCard(width int, message chatui.Message) string {
 	if len(lines) == 0 {
 		return ""
 	}
+	expanded := isToolExpanded(message)
 
 	title := "Tool"
 	body := ""
@@ -100,11 +105,11 @@ func renderToolCard(width int, message chatui.Message) string {
 	}
 
 	if message.ToolName == "write_text_file" || title == "write_text_file" {
-		return renderWriteTextFileCard(width, body, extractWriteTextFileContent(lines))
+		return renderWriteTextFileCard(width, body, extractWriteTextFileContent(lines), expanded)
 	}
 	if message.ToolName == "edit_file_lines" || title == "edit_file_lines" {
 		oldLines, _ := message.Meta["old_lines"].(string)
-		return renderEditFileLinesCard(width, body, extractToolMetadata(lines, "range:"), oldLines, extractWriteTextFileContent(lines))
+		return renderEditFileLinesCard(width, body, extractToolMetadata(lines, "range:"), oldLines, extractWriteTextFileContent(lines), expanded)
 	}
 
 	card := []string{
@@ -117,21 +122,26 @@ func renderToolCard(width int, message chatui.Message) string {
 	return lipgloss.NewStyle().Width(max(1, width-toolBodyStyle.GetHorizontalFrameSize())).Render(strings.Join(card, "\n"))
 }
 
-func renderWriteTextFileCard(width int, target, content string) string {
+func renderWriteTextFileCard(width int, target, content string, expanded bool) string {
 	header := writeFileHeaderStyle.Render("write_text_file")
 	if target != "" {
 		header = header + "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render(target)
 	}
 
 	patchWidth := max(1, width-toolBodyStyle.GetHorizontalFrameSize()-writeFilePatchStyle.GetHorizontalFrameSize())
-	patch := renderAddedContentPatch(patchWidth, content)
+	patch, hint := renderAddedContentPatch(patchWidth, content, expanded)
+
+	body := header + "\n" + patch
+	if hint != "" {
+		body += "\n" + toolHintStyle.Render(hint)
+	}
 
 	return lipgloss.NewStyle().
 		Width(max(1, width-toolBodyStyle.GetHorizontalFrameSize())).
-		Render(header + "\n" + patch)
+		Render(body)
 }
 
-func renderEditFileLinesCard(width int, target, lineRange, oldContent, content string) string {
+func renderEditFileLinesCard(width int, target, lineRange, oldContent, content string, expanded bool) string {
 	header := writeFileHeaderStyle.Render("edit_file_lines")
 	if target != "" {
 		header += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render(target)
@@ -141,15 +151,20 @@ func renderEditFileLinesCard(width int, target, lineRange, oldContent, content s
 	}
 
 	patchWidth := max(1, width-toolBodyStyle.GetHorizontalFrameSize()-writeFilePatchStyle.GetHorizontalFrameSize())
-	patch := renderEditPatch(patchWidth, lineRange, oldContent, content)
+	patch, hint := renderEditPatch(patchWidth, lineRange, oldContent, content, expanded)
+
+	body := header + "\n" + patch
+	if hint != "" {
+		body += "\n" + toolHintStyle.Render(hint)
+	}
 
 	return lipgloss.NewStyle().
 		Width(max(1, width-toolBodyStyle.GetHorizontalFrameSize())).
-		Render(header + "\n" + patch)
+		Render(body)
 }
 
-func renderAddedContentPatch(width int, content string) string {
-	lines := previewContentLines(content, 12)
+func renderAddedContentPatch(width int, content string, expanded bool) (string, string) {
+	lines, truncated := contentLines(content, expanded, toolPreviewLineLimit)
 	if len(lines) == 0 {
 		lines = []string{"+ "}
 	}
@@ -159,12 +174,12 @@ func renderAddedContentPatch(width int, content string) string {
 		rendered = append(rendered, writeFilePlusStyle.Render("+")+" "+line)
 	}
 
-	return writeFilePatchStyle.Width(width).Render(strings.Join(rendered, "\n"))
+	return writeFilePatchStyle.Width(width).Render(strings.Join(rendered, "\n")), expandHint(truncated, expanded)
 }
 
-func renderEditPatch(width int, lineRange, oldContent, content string) string {
+func renderEditPatch(width int, lineRange, oldContent, content string, expanded bool) (string, string) {
 	rendered := make([]string, 0, 16)
-	oldLines := previewContentLines(oldContent, 8)
+	oldLines, oldTruncated := contentLines(oldContent, expanded, toolPreviewLineLimit)
 	if len(oldLines) == 0 && lineRange != "" {
 		rendered = append(rendered, editFileDeleteStyle.Render("-")+" lines "+lineRange)
 	}
@@ -172,7 +187,7 @@ func renderEditPatch(width int, lineRange, oldContent, content string) string {
 		rendered = append(rendered, editFileDeleteStyle.Render("-")+" "+line)
 	}
 
-	lines := previewContentLines(content, 12)
+	lines, newTruncated := contentLines(content, expanded, toolPreviewLineLimit)
 	for _, line := range lines {
 		rendered = append(rendered, writeFilePlusStyle.Render("+")+" "+line)
 	}
@@ -181,21 +196,31 @@ func renderEditPatch(width int, lineRange, oldContent, content string) string {
 		rendered = append(rendered, writeFilePlusStyle.Render("+")+" ")
 	}
 
-	return writeFilePatchStyle.Width(width).Render(strings.Join(rendered, "\n"))
+	return writeFilePatchStyle.Width(width).Render(strings.Join(rendered, "\n")), expandHint(oldTruncated || newTruncated, expanded)
 }
 
-func previewContentLines(content string, maxLines int) []string {
+func contentLines(content string, expanded bool, lineLimit int) ([]string, bool) {
 	content = strings.ReplaceAll(content, "\r\n", "\n")
 	content = strings.TrimRight(content, "\n")
 	if content == "" {
-		return nil
+		return nil, false
 	}
 
-	rawLines := strings.Split(content, "\n")
-	if len(rawLines) > maxLines {
-		rawLines = append(rawLines[:maxLines], "...")
+	lines := strings.Split(content, "\n")
+	if expanded || lineLimit <= 0 || len(lines) <= lineLimit {
+		return lines, false
 	}
-	return rawLines
+	return lines[:lineLimit], true
+}
+
+func expandHint(truncated, expanded bool) string {
+	if truncated {
+		return "Press e in viewport to expand"
+	}
+	if expanded {
+		return "Press e in viewport to collapse"
+	}
+	return ""
 }
 
 func extractWriteTextFileContent(lines []string) string {
@@ -229,7 +254,8 @@ func extractToolMetadata(lines []string, prefix string) string {
 
 func buildToolMeta(toolName string, args map[string]any, oldLines string) map[string]any {
 	meta := map[string]any{
-		"path": stringArg(args, "path"),
+		"path":     stringArg(args, "path"),
+		"expanded": false,
 	}
 	if toolName == "edit_file_lines" {
 		meta["start_line"] = intArg(args, "start_line")
@@ -242,6 +268,14 @@ func buildToolMeta(toolName string, args map[string]any, oldLines string) map[st
 		meta["content"] = stringArg(args, "content")
 	}
 	return meta
+}
+
+func isToolExpanded(message chatui.Message) bool {
+	if message.Meta == nil {
+		return false
+	}
+	expanded, _ := message.Meta["expanded"].(bool)
+	return expanded
 }
 
 func (p *Page) applyToolResultToUI(toolCallID, toolName, result string) {
@@ -262,6 +296,29 @@ func (p *Page) applyToolResultToUI(toolCallID, toolName, result string) {
 		p.messages[i].Meta["old_lines"] = oldLines
 		return
 	}
+}
+
+func (p *Page) ToggleLastToolCard() bool {
+	for i := len(p.messages) - 1; i >= 0; i-- {
+		if p.messages[i].Type != chatui.TypeTool {
+			continue
+		}
+		return p.toggleToolCardAtIndex(i)
+	}
+	return false
+}
+
+func (p *Page) toggleToolCardAtIndex(index int) bool {
+	if index < 0 || index >= len(p.messages) {
+		return false
+	}
+	if p.messages[index].Meta == nil {
+		p.messages[index].Meta = map[string]any{}
+	}
+	expanded, _ := p.messages[index].Meta["expanded"].(bool)
+	p.messages[index].Meta["expanded"] = !expanded
+	p.markDirty()
+	return true
 }
 
 func intArg(args map[string]any, key string) int {

@@ -66,7 +66,7 @@ func Run() error {
 		return err
 	}
 
-	program := tea.NewProgram(NewModel(cfg))
+	program := tea.NewProgram(NewModel(cfg), tea.WithMouseCellMotion())
 	_, err = program.Run()
 	return err
 }
@@ -87,7 +87,16 @@ func (m *Model) syncViewport() {
 
 	m.input.Placeholder = page.Placeholder()
 	m.updateSlashMenu()
-	m.viewport.SetContent(page.Content(m.viewport.Width))
+	content := page.Content(m.viewport.Width)
+	contentChanged := m.viewportContentPage != m.current ||
+		m.viewportContentWidth != m.viewport.Width ||
+		m.viewportContent != content
+	if contentChanged {
+		m.viewport.SetContent(content)
+		m.viewportContent = content
+		m.viewportContentPage = m.current
+		m.viewportContentWidth = m.viewport.Width
+	}
 	if m.current == pageChat && wasAtBottom {
 		m.viewport.GotoBottom()
 		return

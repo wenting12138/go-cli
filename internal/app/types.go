@@ -28,19 +28,20 @@ const (
 )
 
 type keyMap struct {
-	Send  key.Binding
-	Back  key.Binding
-	Quit  key.Binding
-	Focus key.Binding
+	Send       key.Binding
+	Back       key.Binding
+	Quit       key.Binding
+	Focus      key.Binding
+	ToggleTool key.Binding
 }
 
 func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Send, k.Focus, k.Back, k.Quit}
+	return []key.Binding{k.Send, k.Focus, k.ToggleTool, k.Back, k.Quit}
 }
 
 func (k keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
-		{k.Send, k.Focus, k.Back},
+		{k.Send, k.Focus, k.ToggleTool, k.Back},
 		{k.Quit},
 	}
 }
@@ -57,6 +58,10 @@ var keys = keyMap{
 	Focus: key.NewBinding(
 		key.WithKeys("tab"),
 		key.WithHelp("tab", "toggle focus"),
+	),
+	ToggleTool: key.NewBinding(
+		key.WithKeys("e"),
+		key.WithHelp("e", "expand tool"),
 	),
 	Quit: key.NewBinding(
 		key.WithKeys("q", "ctrl+c"),
@@ -87,21 +92,24 @@ var (
 )
 
 type Model struct {
-	viewport viewport.Model
-	input    textinput.Model
-	help     help.Model
-	keys     keyMap
-	width    int
-	height   int
-	current  pageID
-	pages    map[pageID]shared.Page
-	config   config.State
-	bus      *eventbus.Bus
-	events   <-chan any
-	chatSvc  *chatservice.Service
-	slash    slashMenu
-	focus    focusMode
-	store    *sessionstore.Store
+	viewport             viewport.Model
+	viewportContent      string
+	viewportContentPage  pageID
+	viewportContentWidth int
+	input                textinput.Model
+	help                 help.Model
+	keys                 keyMap
+	width                int
+	height               int
+	current              pageID
+	pages                map[pageID]shared.Page
+	config               config.State
+	bus                  *eventbus.Bus
+	events               <-chan any
+	chatSvc              *chatservice.Service
+	slash                slashMenu
+	focus                focusMode
+	store                *sessionstore.Store
 }
 
 type eventMsg struct {

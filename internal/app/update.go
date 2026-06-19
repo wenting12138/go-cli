@@ -72,6 +72,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return handledModel, handledCmd
 		}
 	case m.focus == focusViewport:
+		if key.Matches(msg, m.keys.ToggleTool) {
+			if chatPage, ok := m.pages[pageChat].(*chat.Page); ok && m.current == pageChat {
+				if chatPage.ToggleLastToolCard() {
+					m.persistActiveChat()
+					m.syncViewport()
+					return m, nil
+				}
+			}
+		}
 		m.viewport, _ = m.viewport.Update(msg)
 		return m, nil
 	case key.Matches(msg, m.keys.Send):
@@ -91,6 +100,15 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.current == pageChat && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
+		if chatPage, ok := m.pages[pageChat].(*chat.Page); ok {
+			if line, ok := m.viewportLineAtMouse(msg); ok && chatPage.ToggleToolCardAtLine(line) {
+				m.persistActiveChat()
+				m.syncViewport()
+				return m, nil
+			}
+		}
+	}
 	var cmd tea.Cmd
 	m.viewport, cmd = m.viewport.Update(msg)
 	return m, cmd
@@ -417,25 +435,21 @@ func (m *Model) handleEvent(event any) {
 	case events.ChatThinkingStarted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.BeginThinking(e.RequestID)
-			m.persistActiveChat()
 		}
 	case events.ChatThinkingChunk:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.AppendThinking(e.Chunk)
 			chatPage.AppendReasoning(e.Chunk)
-			m.persistActiveChat()
 		}
 	case events.ChatThinkingSignature:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.SetReasoningSignature(e.Signature)
-			m.persistActiveChat()
 		}
 	case events.ChatResponseStarted:
 		chatPage.BeginAssistantStream(e.RequestID)
 	case events.ChatStreamChunk:
 		if chatPage.HasActiveStream(e.RequestID) {
 			chatPage.AppendStream(e.Chunk)
-			m.persistActiveChat()
 		}
 	case events.ChatToolCallStarted:
 		if chatPage.HasActiveRequest(e.RequestID) {
