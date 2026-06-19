@@ -150,7 +150,7 @@ func renderEditFileLinesCard(width int, target, lineRange, oldContent, content s
 		header += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render(target)
 	}
 	if lineRange != "" {
-		header += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("@@ "+lineRange+" @@")
+		header += "\n" + lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("lines "+lineRange)
 	}
 
 	patchWidth := max(1, width-toolBodyStyle.GetHorizontalFrameSize()-writeFilePatchStyle.GetHorizontalFrameSize())
@@ -190,32 +190,60 @@ func renderAddedContentPatch(width int, content string, expanded bool) (string, 
 
 	rendered := make([]string, 0, len(lines))
 	for _, line := range lines {
-		rendered = append(rendered, writeFilePlusStyle.Render("+")+" "+line)
+		rendered = append(rendered, renderPatchEntry(width, "+", writeFilePlusStyle, line))
 	}
 
-	return writeFilePatchStyle.Width(width).Render(strings.Join(rendered, "\n")), expandHint(truncated, expanded)
+	return strings.Join(rendered, "\n"), expandHint(truncated, expanded)
 }
 
 func renderEditPatch(width int, lineRange, oldContent, content string, expanded bool) (string, string) {
 	rendered := make([]string, 0, 16)
 	oldLines, oldTruncated := contentLines(oldContent, expanded, toolPreviewLineLimit)
 	if len(oldLines) == 0 && lineRange != "" {
-		rendered = append(rendered, editFileDeleteStyle.Render("-")+" lines "+lineRange)
+		rendered = append(rendered, renderPatchEntry(width, "-", editFileDeleteStyle, "lines "+lineRange))
 	}
 	for _, line := range oldLines {
-		rendered = append(rendered, editFileDeleteStyle.Render("-")+" "+line)
+		rendered = append(rendered, renderPatchEntry(width, "-", editFileDeleteStyle, line))
 	}
 
 	lines, newTruncated := contentLines(content, expanded, toolPreviewLineLimit)
 	for _, line := range lines {
-		rendered = append(rendered, writeFilePlusStyle.Render("+")+" "+line)
+		rendered = append(rendered, renderPatchEntry(width, "+", writeFilePlusStyle, line))
 	}
 
 	if len(rendered) == 0 {
-		rendered = append(rendered, writeFilePlusStyle.Render("+")+" ")
+		rendered = append(rendered, renderPatchEntry(width, "+", writeFilePlusStyle, ""))
 	}
 
-	return writeFilePatchStyle.Width(width).Render(strings.Join(rendered, "\n")), expandHint(oldTruncated || newTruncated, expanded)
+	return strings.Join(rendered, "\n"), expandHint(oldTruncated || newTruncated, expanded)
+}
+
+func renderPatchEntry(width int, marker string, markerStyle lipgloss.Style, content string) string {
+	if width <= 0 {
+		width = 1
+	}
+
+	lineText := marker + " " + content
+	visibleWidth := lipgloss.Width(lineText)
+	if visibleWidth < width {
+		lineText += strings.Repeat(" ", width-visibleWidth)
+	}
+
+	markerFG := "38;5;48"
+	if marker == "-" {
+		markerFG = "38;5;203"
+	}
+
+	if lineText == "" {
+		lineText = " "
+	}
+
+	return fmt.Sprintf(
+		"\x1b[48;5;22;%s;1m%s\x1b[48;5;22;38;5;255m%s\x1b[0m",
+		markerFG,
+		string([]rune(lineText)[0]),
+		string([]rune(lineText)[1:]),
+	)
 }
 
 func contentLines(content string, expanded bool, lineLimit int) ([]string, bool) {
