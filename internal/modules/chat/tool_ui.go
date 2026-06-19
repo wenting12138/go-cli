@@ -111,9 +111,6 @@ func renderToolCard(width int, message chatui.Message) string {
 		oldLines, _ := message.Meta["old_lines"].(string)
 		return renderEditFileLinesCard(width, body, extractToolMetadata(lines, "range:"), oldLines, extractWriteTextFileContent(lines), expanded)
 	}
-	if message.ToolName == "exit_plan_mode" || title == "exit_plan_mode" {
-		return renderExitPlanModeCard(width, body)
-	}
 
 	card := []string{
 		toolLabelStyle.Render(title),
@@ -164,22 +161,6 @@ func renderEditFileLinesCard(width int, target, lineRange, oldContent, content s
 	return lipgloss.NewStyle().
 		Width(max(1, width-toolBodyStyle.GetHorizontalFrameSize())).
 		Render(body)
-}
-
-func renderExitPlanModeCard(width int, target string) string {
-	lines := []string{
-		writeFileHeaderStyle.Render("Plan Ready"),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("246")).Render("The planner is waiting for your approval."),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("48")).Bold(true).Render("[ Approve Plan ]"),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("203")).Bold(true).Render("[ Reject Plan ]"),
-		lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render("You can also use /approve or /reject."),
-	}
-	if target != "" {
-		lines = append(lines, lipgloss.NewStyle().Foreground(lipgloss.Color("244")).Render(target))
-	}
-	return lipgloss.NewStyle().
-		Width(max(1, width-toolBodyStyle.GetHorizontalFrameSize())).
-		Render(strings.Join(lines, "\n"))
 }
 
 func renderAddedContentPatch(width int, content string, expanded bool) (string, string) {
@@ -427,8 +408,6 @@ func formatToolTarget(toolName string, args map[string]any) string {
 		return "current model"
 	case "time_now":
 		return "local clock"
-	case "exit_plan_mode":
-		return "awaiting approval"
 	default:
 		if path := stringArg(args, "path"); path != "" {
 			return path

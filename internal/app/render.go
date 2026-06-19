@@ -8,7 +8,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
-	"go-cli/internal/agentmode"
 	"go-cli/internal/modules/chat"
 	"go-cli/internal/modules/chat/domain"
 )
@@ -62,13 +61,9 @@ func (m Model) renderModelStatus() string {
 
 	sessionID := "-"
 	usedContext := 0
-	planPath := "-"
 	if chatPage, ok := m.pages[pageChat].(*chat.Page); ok && chatPage.SessionID() != "" {
 		sessionID = chatPage.SessionID()
 		usedContext = estimateContextUsage(chatPage.SystemPrompt(), chatPage.SnapshotMessages())
-		if m.mode == agentmode.Plan {
-			planPath = m.planPath(chatPage.SessionID())
-		}
 	}
 
 	line := fmt.Sprintf(
@@ -80,15 +75,6 @@ func (m Model) renderModelStatus() string {
 		formatContextWindow(model.ContextWindow),
 		m.focus,
 	)
-	if m.pendingPlanApproval {
-		line += "  plan_status: ready"
-	}
-	if m.rejectFeedbackMode {
-		line += "  plan_status: reject_feedback"
-	}
-	if m.mode == agentmode.Plan && planPath != "" && planPath != "-" {
-		line += "  plan: " + planPath
-	}
 	return statusStyle.Width(width).Render(line)
 }
 

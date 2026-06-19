@@ -172,18 +172,6 @@ func systemSection() string {
 }
 
 func workflowSection(mode agentmode.Mode) string {
-	if mode == agentmode.Plan {
-		return strings.TrimSpace(`
-# Workflow
-- You are in plan mode.
-- Explore the codebase and design the implementation before making changes.
-- Do not propose speculative code edits as if they were already applied.
-- Prefer read-only tools to reduce uncertainty.
-- End with a concrete implementation plan, critical files, and verification steps.
-- When the plan is ready for review, call exit_plan_mode instead of asking for approval in plain text.
-`)
-	}
-
 	return strings.TrimSpace(`
 # Workflow
 - Read relevant code before changing it.

@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"go-cli/internal/agentmode"
 	"go-cli/internal/modules/chat/domain"
 	"go-cli/internal/modules/chat/ui"
 )
@@ -34,9 +33,6 @@ type SessionData struct {
 	UIMessages    []ui.Message
 	SystemPrompt  string
 	ModelMessages []domain.Message
-	Mode          agentmode.Mode
-	PrePlanMode   agentmode.Mode
-	PlanPath      string
 	UpdatedAt     time.Time
 }
 
@@ -56,9 +52,6 @@ type modelFile struct {
 	Title        string           `json:"title"`
 	UpdatedAt    time.Time        `json:"updated_at"`
 	SystemPrompt string           `json:"system_prompt,omitempty"`
-	Mode         agentmode.Mode   `json:"mode,omitempty"`
-	PrePlanMode  agentmode.Mode   `json:"pre_plan_mode,omitempty"`
-	PlanPath     string           `json:"plan_path,omitempty"`
 	Messages     []domain.Message `json:"messages"`
 }
 
@@ -99,9 +92,6 @@ func (s *Store) Save(data SessionData) error {
 		Title:        data.Title,
 		UpdatedAt:    data.UpdatedAt,
 		SystemPrompt: data.SystemPrompt,
-		Mode:         data.Mode,
-		PrePlanMode:  data.PrePlanMode,
-		PlanPath:     data.PlanPath,
 		Messages:     cloneMessages(data.ModelMessages),
 	}
 
@@ -133,9 +123,6 @@ func (s *Store) Load(sessionID string) (SessionData, error) {
 		UIMessages:    ui.CloneMessages(uiPayload.Messages),
 		SystemPrompt:  modelPayload.SystemPrompt,
 		ModelMessages: cloneMessages(modelPayload.Messages),
-		Mode:          modelPayload.Mode,
-		PrePlanMode:   modelPayload.PrePlanMode,
-		PlanPath:      modelPayload.PlanPath,
 		UpdatedAt:     uiPayload.UpdatedAt,
 	}, nil
 }

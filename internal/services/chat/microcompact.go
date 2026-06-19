@@ -38,11 +38,6 @@ func microcompactMessages(messages []domain.Message) ([]domain.Message, microcom
 			}
 		}
 
-		if current.Type == domain.MessageTypeApprovedPlan {
-			compacted = append(compacted, current)
-			continue
-		}
-
 		if current.Type == domain.MessageTypeText &&
 			current.Role == "system" &&
 			len(compacted) > 0 &&

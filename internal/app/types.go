@@ -11,7 +11,6 @@ import (
 	"go-cli/internal/config"
 	"go-cli/internal/eventbus"
 	"go-cli/internal/modules/shared"
-	"go-cli/internal/planstore"
 	chatservice "go-cli/internal/services/chat"
 	"go-cli/internal/sessionstore"
 )
@@ -116,11 +115,7 @@ type Model struct {
 	slash                slashMenu
 	focus                focusMode
 	store                *sessionstore.Store
-	planStore            *planstore.Store
 	mode                 agentmode.Mode
-	prePlanMode          agentmode.Mode
-	pendingPlanApproval  bool
-	rejectFeedbackMode   bool
 	typingIndicatorFrame int
 }
 

@@ -34,10 +34,6 @@ func (s *Service) Compact(model config.ModelConfig, systemPrompt string, message
 	summaryInput, stats := microcompactMessages(messages[:len(messages)-preservedTailMessages])
 	preservedTail := cloneDomainMessages(messages[len(messages)-preservedTailMessages:])
 	restoredFiles := buildReadFileRestoration(messages[:len(messages)-preservedTailMessages], preservedTail)
-	restoredPlans := buildApprovedPlanRestoration(messages[:len(messages)-preservedTailMessages], preservedTail)
-	if approvedPlanNote := buildApprovedPlanSummaryNote(messages); approvedPlanNote != "" {
-		summaryInput = append(summaryInput, domain.TextMessage("system", approvedPlanNote))
-	}
 
 	requestMessages := append(summaryInput, domain.TextMessage("user", compactPrompt()))
 	if strings.TrimSpace(systemPrompt) != "" {
@@ -79,11 +75,11 @@ func (s *Service) Compact(model config.ModelConfig, systemPrompt string, message
 			len(summaryInput),
 			stats.InputMessages,
 			stats.OutputMessages,
-			len(restoredFiles)+len(restoredPlans),
+			len(restoredFiles),
 			len(preservedTail),
 		)),
 		Summary:       domain.TextMessage("system", compactSummaryMessage(summary)),
-		RestoredFiles: append(restoredPlans, restoredFiles...),
+		RestoredFiles: restoredFiles,
 		PreservedTail: preservedTail,
 	}, nil
 }
@@ -115,9 +111,6 @@ KEY FILES
 
 IMPORTANT COMMANDS AND TOOLS
 - command/tool + result
-
-APPROVED PLAN
-- path + key implementation steps from the latest approved plan
 
 DECISIONS MADE
 - one or more bullets
@@ -218,47 +211,6 @@ func buildReadFileRestoration(olderMessages, preservedTail []domain.Message) []d
 		)))
 	}
 	return out
-}
-
-func buildApprovedPlanRestoration(olderMessages, preservedTail []domain.Message) []domain.Message {
-	for _, entry := range preservedTail {
-		if entry.Type == domain.MessageTypeApprovedPlan {
-			return nil
-		}
-	}
-
-	for i := len(olderMessages) - 1; i >= 0; i-- {
-		entry := olderMessages[i]
-		if entry.Type != domain.MessageTypeApprovedPlan {
-			continue
-		}
-		return []domain.Message{cloneDomainMessages([]domain.Message{entry})[0]}
-	}
-
-	return nil
-}
-
-func buildApprovedPlanSummaryNote(messages []domain.Message) string {
-	for i := len(messages) - 1; i >= 0; i-- {
-		entry := messages[i]
-		if entry.Type != domain.MessageTypeApprovedPlan {
-			continue
-		}
-		content := strings.TrimSpace(entry.Content)
-		if content == "" {
-			return ""
-		}
-		lines := strings.Split(content, "\n")
-		if len(lines) > 8 {
-			lines = lines[:8]
-		}
-		return fmt.Sprintf(
-			"Approved plan context:\npath: %s\nsummary:\n%s",
-			strings.TrimSpace(entry.PlanPath),
-			strings.Join(lines, "\n"),
-		)
-	}
-	return ""
 }
 
 func readFilePath(args map[string]any) string {

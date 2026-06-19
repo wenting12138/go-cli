@@ -20,7 +20,6 @@ import (
 	"go-cli/internal/modules/resume"
 	"go-cli/internal/modules/shared"
 	toolspage "go-cli/internal/modules/tools"
-	"go-cli/internal/planstore"
 	chatservice "go-cli/internal/services/chat"
 	"go-cli/internal/sessionstore"
 )
@@ -35,7 +34,6 @@ func NewModel(cfg config.State) Model {
 
 	activeModel, _ := cfg.ActiveModel()
 	store, _ := sessionstore.New()
-	planStore, _ := planstore.New()
 	summaries := []sessionstore.Summary{}
 	if store != nil {
 		summaries, _ = store.List()
@@ -50,21 +48,20 @@ func NewModel(cfg config.State) Model {
 	events, _ := bus.Subscribe(128)
 
 	return Model{
-		viewport:  viewport.New(0, 0),
-		input:     input,
-		help:      help.New(),
-		keys:      keys,
-		current:   pageChat,
-		pages:     pages,
-		config:    cfg,
-		bus:       bus,
-		events:    events,
-		chatSvc:   chatservice.New(bus),
-		slash:     newSlashMenu(),
-		focus:     focusInput,
-		store:     store,
-		planStore: planStore,
-		mode:      agentmode.Chat,
+		viewport: viewport.New(0, 0),
+		input:    input,
+		help:     help.New(),
+		keys:     keys,
+		current:  pageChat,
+		pages:    pages,
+		config:   cfg,
+		bus:      bus,
+		events:   events,
+		chatSvc:  chatservice.New(bus),
+		slash:    newSlashMenu(),
+		focus:    focusInput,
+		store:    store,
+		mode:     agentmode.Chat,
 	}
 }
 
@@ -94,12 +91,6 @@ func (m *Model) syncViewport() {
 	wasAtBottom := m.viewport.AtBottom()
 
 	m.input.Placeholder = page.Placeholder()
-	if m.current == pageChat && m.mode == agentmode.Plan {
-		m.input.Placeholder = "Describe the implementation plan or use /approve to exit plan mode"
-	}
-	if m.current == pageChat && m.rejectFeedbackMode {
-		m.input.Placeholder = "Enter plan feedback and press Enter to send, or /cancel to abort"
-	}
 	m.updateSlashMenu()
 	content := page.Content(m.viewport.Width)
 	contentChanged := m.viewportContentPage != m.current ||

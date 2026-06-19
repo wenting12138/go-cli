@@ -114,25 +114,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m Model) handleMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.current == pageChat && msg.Action == tea.MouseActionPress && msg.Button == tea.MouseButtonLeft {
 		if chatPage, ok := m.pages[pageChat].(*chat.Page); ok {
-			if line, ok := m.viewportLineAtMouse(msg); ok {
-				switch chatPage.ToolActionAtLine(line) {
-				case chat.ToolActionPlanApprove:
-					m.approvePlan()
-					m.persistActiveChat()
-					m.syncViewport()
-					return m, nil
-				case chat.ToolActionPlanReject:
-					if m.pendingPlanApproval {
-						m.beginRejectFeedback()
-						m.syncViewport()
-						return m, nil
-					}
-				}
-				if chatPage.ToggleToolCardAtLine(line) {
-					m.persistActiveChat()
-					m.syncViewport()
-					return m, nil
-				}
+			if line, ok := m.viewportLineAtMouse(msg); ok && chatPage.ToggleToolCardAtLine(line) {
+				m.persistActiveChat()
+				m.syncViewport()
+				return m, nil
 			}
 		}
 	}
@@ -229,12 +214,6 @@ func (m Model) handleSendKey() (tea.Model, tea.Cmd) {
 	if strings.HasPrefix(text, "/") {
 		return m.handleSlashCommand(text)
 	}
-	if m.rejectFeedbackMode {
-		m.rejectPlan(text)
-		m.persistActiveChat()
-		m.syncViewport()
-		return m, nil
-	}
 
 	if m.current == pageChat {
 		return m.handleChatInput(text)
@@ -307,61 +286,6 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.input.Placeholder = m.currentPage().Placeholder()
 		m.syncViewport()
 		return m, nil
-	case "plan":
-		m.current = pageChat
-		m.enterPlanMode()
-		m.input.Placeholder = m.currentPage().Placeholder()
-		if len(parts) == 1 {
-			m.showCurrentPlan()
-			m.persistActiveChat()
-			m.syncViewport()
-			return m, nil
-		}
-		return m.handleChatInput(strings.Join(parts[1:], " "))
-	case "approve":
-		if !m.pendingPlanApproval {
-			if page := m.currentPage(); page != nil {
-				page.SystemMessage("No plan is waiting for approval.")
-			}
-			m.syncViewport()
-			return m, nil
-		}
-		m.approvePlan()
-		m.persistActiveChat()
-		m.syncViewport()
-		return m, nil
-	case "reject":
-		if !m.pendingPlanApproval && !m.rejectFeedbackMode {
-			if page := m.currentPage(); page != nil {
-				page.SystemMessage("No plan is waiting for rejection.")
-			}
-			m.syncViewport()
-			return m, nil
-		}
-		m.current = pageChat
-		feedback := strings.TrimSpace(strings.Join(parts[1:], " "))
-		if feedback == "" {
-			m.beginRejectFeedback()
-			m.input.Placeholder = m.currentPage().Placeholder()
-			m.syncViewport()
-			return m, nil
-		}
-		m.rejectPlan(feedback)
-		m.persistActiveChat()
-		m.syncViewport()
-		return m, nil
-	case "cancel":
-		if m.rejectFeedbackMode {
-			m.cancelRejectFeedback()
-			m.syncViewport()
-			return m, nil
-		}
-		if page := m.currentPage(); page != nil {
-			page.SystemMessage("Nothing to cancel.")
-		}
-		m.persistActiveChat()
-		m.syncViewport()
-		return m, nil
 	case "models":
 		if len(parts) == 1 {
 			m.current = pageModels
@@ -389,7 +313,7 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		return m.handleClearCommand()
 	default:
 		if page := m.currentPage(); page != nil {
-			page.SystemMessage(fmt.Sprintf("Unknown command: /%s\nAvailable commands: /chat /plan /approve /reject [feedback] /cancel /models /models <id> /resume /resume <id> /tools /compact /clear", parts[0]))
+			page.SystemMessage(fmt.Sprintf("Unknown command: /%s\nAvailable commands: /chat /models /models <id> /resume /resume <id> /tools /compact /clear", parts[0]))
 		}
 		m.syncViewport()
 		return m, nil
@@ -443,14 +367,13 @@ func (m *Model) handleClearCommand() (tea.Model, tea.Cmd) {
 	}
 	m.pages[pageChat] = chat.NewPage(activeModel)
 	m.mode = agentmode.Chat
-	m.prePlanMode = ""
-	m.pendingPlanApproval = false
-	m.rejectFeedbackMode = false
 	m.typingIndicatorFrame = 0
 	if m.current == pageChat {
 		m.input.Placeholder = m.currentPage().Placeholder()
 	}
-	m.refreshToolSpecs()
+	if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok {
+		*toolsPage = *toolspage.NewPage(agenttools.Specs(activeModel, m.mode))
+	}
 	m.syncViewport()
 	return m, nil
 }
@@ -510,15 +433,13 @@ func (m *Model) handleResumeByID(id string) (tea.Model, tea.Cmd) {
 
 	chatPage.RestoreSession(session.ID, session.Title, session.UIMessages, session.ModelMessages)
 	chatPage.SetSystemPrompt(session.SystemPrompt)
-	m.mode = session.Mode
-	if m.mode == "" {
-		m.mode = agentmode.Chat
-	}
-	m.prePlanMode = session.PrePlanMode
-	m.pendingPlanApproval = false
-	m.rejectFeedbackMode = false
+	m.mode = agentmode.Chat
 	m.typingIndicatorFrame = 0
-	m.refreshToolSpecs()
+	if activeModel, activeErr := m.config.ActiveModel(); activeErr == nil {
+		if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok {
+			*toolsPage = *toolspage.NewPage(agenttools.Specs(activeModel, m.mode))
+		}
+	}
 	resumePage.MarkResumed(session.ID)
 	m.current = pageChat
 	m.input.Placeholder = m.currentPage().Placeholder()
@@ -558,9 +479,6 @@ func (m *Model) handleEvent(event any) {
 	case events.ChatToolCallStarted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.AppendToolCall(e.ToolCallID, e.Tool, e.Args)
-			if e.Tool == "exit_plan_mode" {
-				m.markPlanReady()
-			}
 			m.persistActiveChat()
 		}
 	case events.ChatToolCallCompleted:
@@ -578,7 +496,6 @@ func (m *Model) handleEvent(event any) {
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FinishStream()
 			m.typingIndicatorFrame = 0
-			m.saveCurrentPlan()
 			m.persistActiveChat()
 		}
 	}
@@ -600,9 +517,6 @@ func (m *Model) persistActiveChat() {
 		UIMessages:    chatPage.UISnapshotMessages(),
 		SystemPrompt:  chatPage.SystemPrompt(),
 		ModelMessages: chatPage.SnapshotMessages(),
-		Mode:          m.mode,
-		PrePlanMode:   m.prePlanMode,
-		PlanPath:      m.planPath(chatPage.SessionID()),
 		UpdatedAt:     time.Now(),
 	})
 	m.refreshResumePage()

@@ -5,10 +5,6 @@ import "strings"
 func newSlashMenu() slashMenu {
 	commands := []slashCommand{
 		{command: "/chat", description: "back to chat page"},
-		{command: "/plan", description: "enter plan mode"},
-		{command: "/approve", description: "exit plan mode"},
-		{command: "/reject", description: "reject plan with optional feedback"},
-		{command: "/cancel", description: "cancel feedback input"},
 		{command: "/models", description: "open model selector"},
 		{command: "/resume", description: "open session resume page"},
 		{command: "/tools", description: "inspect tool definitions"},

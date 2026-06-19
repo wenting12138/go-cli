@@ -46,7 +46,14 @@ func (p *Page) BeginThinking(requestID string) {
 		p.streamRequestID = requestID
 	}
 	if p.thinkingIndex >= 0 && p.thinkingIndex < len(p.messages) {
-		return
+		p.messages[p.thinkingIndex].Content = strings.TrimSpace(p.messages[p.thinkingIndex].Content)
+		p.thinkingIndex = -1
+	}
+	if p.modelStreamIndex >= 0 && p.modelStreamIndex < len(p.modelMessages) {
+		current := p.modelMessages[p.modelStreamIndex]
+		if strings.TrimSpace(current.Content) != "" || strings.TrimSpace(current.Reasoning) != "" {
+			p.modelStreamIndex = -1
+		}
 	}
 	if p.modelStreamIndex < 0 || p.modelStreamIndex >= len(p.modelMessages) {
 		p.modelMessages = append(p.modelMessages, domain.TextMessage("assistant", ""))

@@ -7,15 +7,6 @@ import (
 )
 
 func Build(model config.ModelConfig, mode agentmode.Mode) []react.Tool {
-	if mode == agentmode.Plan {
-		return []react.Tool{
-			TimeNow{},
-			ReadFile{},
-			GrepFiles{},
-			ExitPlanMode{},
-		}
-	}
-
 	return []react.Tool{
 		TimeNow{},
 		ReadFile{},

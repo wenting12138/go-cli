@@ -58,8 +58,6 @@ func toUIMessages(messages []domain.Message) []chatui.Message {
 		switch message.Type {
 		case domain.MessageTypeCompact:
 			out = append(out, chatui.TextMessage(chatui.TypeSystem, message.Content))
-		case domain.MessageTypeApprovedPlan:
-			out = append(out, chatui.TextMessage(chatui.TypeSystem, fmt.Sprintf("Approved plan loaded from %s.", message.PlanPath)))
 		case domain.MessageTypeToolCall:
 			out = append(out, chatui.ToolMessage(message.ToolCallID, message.ToolName, formatToolCall(message.ToolName, message.Args), buildToolMeta(message.ToolName, message.Args, "")))
 		default:
