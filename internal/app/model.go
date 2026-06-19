@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/help"
@@ -185,4 +186,10 @@ func waitEventCmd(events <-chan any) tea.Cmd {
 		}
 		return eventMsg{event: event}
 	}
+}
+
+func animationTickCmd() tea.Cmd {
+	return tea.Tick(180*time.Millisecond, func(time.Time) tea.Msg {
+		return animationTickMsg{}
+	})
 }

@@ -44,7 +44,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case eventMsg:
 		m.handleEvent(msg.event)
 		m.syncViewport()
-		return m, waitEventCmd(m.events)
+		return m, tea.Batch(waitEventCmd(m.events), m.animationCmd())
+	case animationTickMsg:
+		if m.hasTypingIndicator() {
+			m.typingIndicatorFrame = (m.typingIndicatorFrame + 1) % 3
+			m.syncViewport()
+			return m, m.animationCmd()
+		}
+		return m, nil
 	}
 
 	var cmd tea.Cmd
@@ -435,6 +442,7 @@ func (m *Model) handleClearCommand() (tea.Model, tea.Cmd) {
 	m.prePlanMode = ""
 	m.pendingPlanApproval = false
 	m.rejectFeedbackMode = false
+	m.typingIndicatorFrame = 0
 	if m.current == pageChat {
 		m.input.Placeholder = m.currentPage().Placeholder()
 	}
@@ -505,6 +513,7 @@ func (m *Model) handleResumeByID(id string) (tea.Model, tea.Cmd) {
 	m.prePlanMode = session.PrePlanMode
 	m.pendingPlanApproval = false
 	m.rejectFeedbackMode = false
+	m.typingIndicatorFrame = 0
 	m.refreshToolSpecs()
 	resumePage.MarkResumed(session.ID)
 	m.current = pageChat
@@ -522,6 +531,7 @@ func (m *Model) handleEvent(event any) {
 	switch e := event.(type) {
 	case events.ChatStreamStarted:
 		chatPage.BeginRequest(e.RequestID)
+		m.typingIndicatorFrame = 0
 	case events.ChatThinkingStarted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.BeginThinking(e.RequestID)
@@ -557,11 +567,13 @@ func (m *Model) handleEvent(event any) {
 	case events.ChatStreamFailed:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FailStream(e.Err)
+			m.typingIndicatorFrame = 0
 			m.persistActiveChat()
 		}
 	case events.ChatStreamCompleted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FinishStream()
+			m.typingIndicatorFrame = 0
 			m.saveCurrentPlan()
 			m.persistActiveChat()
 		}
@@ -606,4 +618,19 @@ func (m *Model) refreshResumePage() {
 		return
 	}
 	resumePage.SetSessions(summaries)
+}
+
+func (m Model) hasTypingIndicator() bool {
+	if m.current != pageChat {
+		return false
+	}
+	chatPage, ok := m.pages[pageChat].(*chat.Page)
+	return ok && chatPage.HasPendingStream()
+}
+
+func (m Model) animationCmd() tea.Cmd {
+	if !m.hasTypingIndicator() {
+		return nil
+	}
+	return animationTickCmd()
 }

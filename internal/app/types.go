@@ -91,6 +91,11 @@ var (
 				BorderForeground(lipgloss.Color("238")).
 				Foreground(lipgloss.Color("242")).
 				Padding(0, 1)
+	typingIndicatorStyle = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("244"))
+	typingIndicatorActiveStyle = lipgloss.NewStyle().
+					Foreground(lipgloss.Color("86")).
+					Bold(true)
 )
 
 type Model struct {
@@ -117,11 +122,14 @@ type Model struct {
 	prePlanMode          agentmode.Mode
 	pendingPlanApproval  bool
 	rejectFeedbackMode   bool
+	typingIndicatorFrame int
 }
 
 type eventMsg struct {
 	event any
 }
+
+type animationTickMsg struct{}
 
 type slashCommand struct {
 	command     string
