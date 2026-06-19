@@ -70,6 +70,10 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.toggleFocus()
 		return m, nil
 	case key.Matches(msg, m.keys.Back):
+		if interrupted := m.interruptActiveStream(); interrupted {
+			m.syncViewport()
+			return m, nil
+		}
 		return m.handleBackKey()
 	case m.current == pageModels:
 		return m.handleModelsKey(msg)
@@ -618,6 +622,21 @@ func (m *Model) refreshResumePage() {
 		return
 	}
 	resumePage.SetSessions(summaries)
+}
+
+func (m *Model) interruptActiveStream() bool {
+	if m.current != pageChat {
+		return false
+	}
+	chatPage, ok := m.pages[pageChat].(*chat.Page)
+	if !ok || !chatPage.HasPendingStream() {
+		return false
+	}
+	requestID := chatPage.ActiveRequestID()
+	if requestID == "" {
+		return false
+	}
+	return m.chatSvc.Cancel(requestID)
 }
 
 func (m Model) hasTypingIndicator() bool {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"sync"
 	"time"
 
 	"go-cli/internal/agent/react"
@@ -20,12 +21,15 @@ import (
 type Service struct {
 	bus           *eventbus.Bus
 	promptBuilder *prompt.Builder
+	mu            sync.Mutex
+	active        map[string]context.CancelFunc
 }
 
 func New(bus *eventbus.Bus) *Service {
 	return &Service{
 		bus:           bus,
 		promptBuilder: prompt.NewBuilder(),
+		active:        make(map[string]context.CancelFunc),
 	}
 }
 
@@ -41,10 +45,12 @@ func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, mes
 	agent := react.New(client, model, tools.Build(model, mode), s.promptBuilder, systemPrompt)
 
 	requestID := fmt.Sprintf("chat-%d", time.Now().UnixNano())
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	s.storeCancel(requestID, cancel)
 	s.bus.Publish(events.ChatStreamStarted{RequestID: requestID})
 
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+		defer s.clearCancel(requestID)
 		defer cancel()
 		toolArgsByID := make(map[string]map[string]any)
 
@@ -93,6 +99,13 @@ func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, mes
 			},
 		})
 		if err != nil {
+			if ctx.Err() == context.Canceled {
+				s.bus.Publish(events.ChatStreamFailed{
+					RequestID: requestID,
+					Err:       "response interrupted",
+				})
+				return
+			}
 			s.bus.Publish(events.ChatStreamFailed{
 				RequestID: requestID,
 				Err:       fmt.Sprintf("model request failed: %s", err),
@@ -104,6 +117,17 @@ func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, mes
 	}()
 
 	return nil
+}
+
+func (s *Service) Cancel(requestID string) bool {
+	s.mu.Lock()
+	cancel, ok := s.active[requestID]
+	s.mu.Unlock()
+	if !ok {
+		return false
+	}
+	cancel()
+	return true
 }
 
 func (s *Service) BuildSystemPrompt(model config.ModelConfig, mode agentmode.Mode) (string, error) {
@@ -128,4 +152,16 @@ func cloneArgs(args map[string]any) map[string]any {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func (s *Service) storeCancel(requestID string, cancel context.CancelFunc) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.active[requestID] = cancel
+}
+
+func (s *Service) clearCancel(requestID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.active, requestID)
 }
