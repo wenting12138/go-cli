@@ -55,6 +55,70 @@ type contentBlock struct {
 	Content   string         `json:"content,omitempty"`
 }
 
+func (b contentBlock) MarshalJSON() ([]byte, error) {
+	payload := map[string]any{
+		"type": b.Type,
+	}
+
+	switch b.Type {
+	case "text":
+		if b.Text != "" {
+			payload["text"] = b.Text
+		}
+	case "thinking":
+		if b.Thinking != "" {
+			payload["thinking"] = b.Thinking
+		}
+		if b.Signature != "" {
+			payload["signature"] = b.Signature
+		}
+	case "tool_use":
+		if b.ID != "" {
+			payload["id"] = b.ID
+		}
+		if b.Name != "" {
+			payload["name"] = b.Name
+		}
+		if b.Input == nil {
+			payload["input"] = map[string]any{}
+		} else {
+			payload["input"] = b.Input
+		}
+	case "tool_result":
+		if b.ToolUseID != "" {
+			payload["tool_use_id"] = b.ToolUseID
+		}
+		payload["content"] = b.Content
+	default:
+		if b.Text != "" {
+			payload["text"] = b.Text
+		}
+		if b.ID != "" {
+			payload["id"] = b.ID
+		}
+		if b.Name != "" {
+			payload["name"] = b.Name
+		}
+		if b.Input != nil {
+			payload["input"] = b.Input
+		}
+		if b.ToolUseID != "" {
+			payload["tool_use_id"] = b.ToolUseID
+		}
+		if b.Content != "" {
+			payload["content"] = b.Content
+		}
+		if b.Thinking != "" {
+			payload["thinking"] = b.Thinking
+		}
+		if b.Signature != "" {
+			payload["signature"] = b.Signature
+		}
+	}
+
+	return json.Marshal(payload)
+}
+
 type tool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
