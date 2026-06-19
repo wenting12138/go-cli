@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -26,6 +27,7 @@ func NewModel(cfg config.State) Model {
 	input.Prompt = "> "
 	input.Placeholder = "Type a message or use /resume or /models or /tools"
 	input.Focus()
+	input.Cursor.SetMode(cursor.CursorStatic)
 	input.CharLimit = 280
 
 	activeModel, _ := cfg.ActiveModel()
@@ -73,7 +75,7 @@ func Run() error {
 
 func (m Model) Init() tea.Cmd {
 	m.syncViewport()
-	return tea.Batch(textinput.Blink, waitEventCmd(m.events))
+	return waitEventCmd(m.events)
 }
 
 func (m *Model) syncViewport() {
