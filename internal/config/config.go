@@ -19,12 +19,13 @@ type Config struct {
 }
 
 type ModelConfig struct {
-	ID            string `json:"id"`
-	Provider      string `json:"provider"`
-	Name          string `json:"name"`
-	BaseURL       string `json:"base_url"`
-	APIKey        string `json:"api_key"`
-	ContextWindow int    `json:"context_window"`
+	ID              string `json:"id"`
+	Provider        string `json:"provider"`
+	Name            string `json:"name"`
+	BaseURL         string `json:"base_url"`
+	CompleteBaseURL *bool  `json:"complete_base_url,omitempty"`
+	APIKey          string `json:"api_key"`
+	ContextWindow   int    `json:"context_window"`
 }
 
 type State struct {
@@ -100,35 +101,43 @@ func defaultPath() (string, error) {
 }
 
 func defaultConfig() Config {
+	autoComplete := true
 	return Config{
 		CurrentModel: "openai-gpt-4.1-mini",
 		Models: []ModelConfig{
 			{
-				ID:            "openai-gpt-4.1-mini",
-				Provider:      "openai",
-				Name:          "gpt-4.1-mini",
-				BaseURL:       "https://api.openai.com/v1",
-				APIKey:        "",
-				ContextWindow: 128000,
+				ID:              "openai-gpt-4.1-mini",
+				Provider:        "openai",
+				Name:            "gpt-4.1-mini",
+				BaseURL:         "https://api.openai.com/v1",
+				CompleteBaseURL: &autoComplete,
+				APIKey:          "",
+				ContextWindow:   128000,
 			},
 			{
-				ID:            "openai-gpt-4.1",
-				Provider:      "openai",
-				Name:          "gpt-4.1",
-				BaseURL:       "https://api.openai.com/v1",
-				APIKey:        "",
-				ContextWindow: 128000,
+				ID:              "openai-gpt-4.1",
+				Provider:        "openai",
+				Name:            "gpt-4.1",
+				BaseURL:         "https://api.openai.com/v1",
+				CompleteBaseURL: &autoComplete,
+				APIKey:          "",
+				ContextWindow:   128000,
 			},
 			{
-				ID:            "ollama-qwen3",
-				Provider:      "ollama",
-				Name:          "qwen3:latest",
-				BaseURL:       "http://localhost:11434",
-				APIKey:        "",
-				ContextWindow: 32000,
+				ID:              "ollama-qwen3",
+				Provider:        "ollama",
+				Name:            "qwen3:latest",
+				BaseURL:         "http://localhost:11434",
+				CompleteBaseURL: &autoComplete,
+				APIKey:          "",
+				ContextWindow:   32000,
 			},
 		},
 	}
+}
+
+func (m ModelConfig) ShouldCompleteBaseURL() bool {
+	return m.CompleteBaseURL == nil || *m.CompleteBaseURL
 }
 
 func load(path string) (Config, bool, error) {

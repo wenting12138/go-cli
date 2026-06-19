@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go-cli/internal/config"
+	"go-cli/internal/modelclient/endpointutil"
 	"go-cli/internal/modelclient/protocol"
 	"go-cli/internal/modules/chat/domain"
 )
@@ -113,7 +114,8 @@ func (c *Client) StreamChat(ctx context.Context, chatRequest protocol.ChatReques
 		return fmt.Errorf("marshal openai request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.model.BaseURL, "/")+"/chat/completions", bytes.NewReader(body))
+	endpoint := endpointutil.Resolve(c.model.BaseURL, "/chat/completions", c.model.ShouldCompleteBaseURL())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build openai request: %w", err)
 	}

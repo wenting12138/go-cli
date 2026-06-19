@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go-cli/internal/config"
+	"go-cli/internal/modelclient/endpointutil"
 	"go-cli/internal/modelclient/protocol"
 	"go-cli/internal/modules/chat/domain"
 )
@@ -116,7 +117,8 @@ func (c *Client) StreamChat(ctx context.Context, chatRequest protocol.ChatReques
 		return fmt.Errorf("marshal anthropic request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.model.BaseURL, "/")+"/messages", bytes.NewReader(body))
+	endpoint := endpointutil.Resolve(c.model.BaseURL, "/messages", c.model.ShouldCompleteBaseURL())
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("build anthropic request: %w", err)
 	}
