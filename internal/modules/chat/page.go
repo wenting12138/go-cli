@@ -195,6 +195,14 @@ func (p *Page) AppendReasoning(chunk string) {
 	p.markDirty()
 }
 
+func (p *Page) SetReasoningSignature(signature string) {
+	if p.modelStreamIndex < 0 || p.modelStreamIndex >= len(p.modelMessages) {
+		return
+	}
+	p.modelMessages[p.modelStreamIndex].ReasoningSignature = signature
+	p.markDirty()
+}
+
 func (p *Page) FinishStream() {
 	if p.thinkingIndex >= 0 && p.thinkingIndex < len(p.messages) {
 		p.messages[p.thinkingIndex].Content = strings.TrimSpace(p.messages[p.thinkingIndex].Content)

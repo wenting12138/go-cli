@@ -425,6 +425,11 @@ func (m *Model) handleEvent(event any) {
 			chatPage.AppendReasoning(e.Chunk)
 			m.persistActiveChat()
 		}
+	case events.ChatThinkingSignature:
+		if chatPage.HasActiveRequest(e.RequestID) {
+			chatPage.SetReasoningSignature(e.Signature)
+			m.persistActiveChat()
+		}
 	case events.ChatResponseStarted:
 		chatPage.BeginAssistantStream(e.RequestID)
 	case events.ChatStreamChunk:

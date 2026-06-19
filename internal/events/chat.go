@@ -22,6 +22,11 @@ type ChatThinkingChunk struct {
 	Chunk     string
 }
 
+type ChatThinkingSignature struct {
+	RequestID string
+	Signature string
+}
+
 type ChatStreamFailed struct {
 	RequestID string
 	Err       string

@@ -68,6 +68,12 @@ func (s *Service) StartStream(model config.ModelConfig, messages []domain.Messag
 					Chunk:     chunk,
 				})
 			},
+			OnThinkingSignature: func(signature string) {
+				s.bus.Publish(events.ChatThinkingSignature{
+					RequestID: requestID,
+					Signature: signature,
+				})
+			},
 			OnFinalStart: func() {
 				s.bus.Publish(events.ChatResponseStarted{RequestID: requestID})
 			},

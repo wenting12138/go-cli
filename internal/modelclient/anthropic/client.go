@@ -46,6 +46,8 @@ type message struct {
 type contentBlock struct {
 	Type      string         `json:"type"`
 	Text      string         `json:"text,omitempty"`
+	Thinking  string         `json:"thinking,omitempty"`
+	Signature string         `json:"signature,omitempty"`
 	ID        string         `json:"id,omitempty"`
 	Name      string         `json:"name,omitempty"`
 	Input     map[string]any `json:"input,omitempty"`
@@ -250,8 +252,8 @@ func (c *Client) handleEvent(eventName, data string, accumulators map[int]*toolU
 				return nil
 			}
 			return onEvent(protocol.Event{
-				Type: protocol.EventTypeRedactedThinking,
-				Text: "[redacted thinking omitted]",
+				Type: protocol.EventTypeThinkingSignature,
+				Text: parsed.Delta.Signature,
 			})
 		case "input_json_delta":
 			acc, ok := accumulators[parsed.Index]
@@ -372,14 +374,23 @@ func toMessages(messages []domain.Message) (string, []message) {
 				}
 				continue
 			}
+			blocks := make([]contentBlock, 0, 2)
+			if entry.ModelRole() == "assistant" && strings.TrimSpace(entry.Reasoning) != "" {
+				blocks = append(blocks, contentBlock{
+					Type:      "thinking",
+					Thinking:  entry.Reasoning,
+					Signature: entry.ReasoningSignature,
+				})
+			}
+			if entry.Content != "" || len(blocks) == 0 {
+				blocks = append(blocks, contentBlock{
+					Type: "text",
+					Text: entry.Content,
+				})
+			}
 			out = append(out, message{
-				Role: entry.ModelRole(),
-				Content: []contentBlock{
-					{
-						Type: "text",
-						Text: entry.Content,
-					},
-				},
+				Role:    entry.ModelRole(),
+				Content: blocks,
 			})
 		}
 	}

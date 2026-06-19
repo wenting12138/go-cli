@@ -23,12 +23,13 @@ type Tool interface {
 }
 
 type Hooks struct {
-	OnToolStart     func(name, toolCallID string, args map[string]any)
-	OnToolResult    func(name, toolCallID, result string)
-	OnThinkingStart func()
-	OnThinkingChunk func(chunk string)
-	OnFinalStart    func()
-	OnFinalChunk    func(chunk string)
+	OnToolStart         func(name, toolCallID string, args map[string]any)
+	OnToolResult        func(name, toolCallID, result string)
+	OnThinkingStart     func()
+	OnThinkingChunk     func(chunk string)
+	OnThinkingSignature func(signature string)
+	OnFinalStart        func()
+	OnFinalChunk        func(chunk string)
 }
 
 type Agent struct {
@@ -80,6 +81,10 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 		}, func(chunk string) {
 			if hooks.OnThinkingChunk != nil {
 				hooks.OnThinkingChunk(chunk)
+			}
+		}, func(signature string) {
+			if hooks.OnThinkingSignature != nil {
+				hooks.OnThinkingSignature(signature)
 			}
 		}, func(chunk string) {
 			if hooks.OnFinalStart != nil && !streamStarted {
@@ -163,7 +168,7 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 	return fmt.Errorf("agent exceeded max steps without final answer")
 }
 
-func (a *Agent) collect(ctx context.Context, messages []domain.Message, onThinkingStart func(), onThinkingChunk func(string), onTextChunk func(string)) (collectResult, error) {
+func (a *Agent) collect(ctx context.Context, messages []domain.Message, onThinkingStart func(), onThinkingChunk func(string), onThinkingSignature func(string), onTextChunk func(string)) (collectResult, error) {
 	result := collectResult{}
 	thinkingStarted := false
 	request := protocol.ChatRequest{
@@ -185,6 +190,10 @@ func (a *Agent) collect(ctx context.Context, messages []domain.Message, onThinki
 			}
 			if onThinkingChunk != nil && event.Text != "" {
 				onThinkingChunk(event.Text)
+			}
+		case protocol.EventTypeThinkingSignature:
+			if onThinkingSignature != nil && event.Text != "" {
+				onThinkingSignature(event.Text)
 			}
 		case protocol.EventTypeToolCall:
 			result.ToolCalls = append(result.ToolCalls, protocol.ToolCall{

@@ -10,14 +10,15 @@ const (
 )
 
 type Message struct {
-	Role       string
-	Content    string
-	Reasoning  string
-	Type       string
-	ToolName   string
-	ToolCallID string
-	Args       map[string]any
-	Result     string
+	Role               string
+	Content            string
+	Reasoning          string
+	ReasoningSignature string
+	Type               string
+	ToolName           string
+	ToolCallID         string
+	Args               map[string]any
+	Result             string
 }
 
 type Session struct {
