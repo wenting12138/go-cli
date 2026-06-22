@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 )
 
 const (
@@ -92,6 +94,41 @@ func (s *State) SelectModel(id string) (ModelConfig, error) {
 	return ModelConfig{}, fmt.Errorf("model %q not found", id)
 }
 
+func (s *State) RenameModel(id, name string) (ModelConfig, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ModelConfig{}, fmt.Errorf("model name cannot be empty")
+	}
+
+	for i, model := range s.Config.Models {
+		if model.ID != id {
+			continue
+		}
+		nextID := buildModelID(model.Provider, name)
+		if nextID == "" {
+			return ModelConfig{}, fmt.Errorf("model name %q cannot produce a valid id", name)
+		}
+		for j, other := range s.Config.Models {
+			if j == i {
+				continue
+			}
+			if other.ID == nextID {
+				return ModelConfig{}, fmt.Errorf("model id %q already exists", nextID)
+			}
+		}
+		s.Config.Models[i].ID = nextID
+		s.Config.Models[i].Name = name
+		if s.Config.CurrentModel == id {
+			s.Config.CurrentModel = nextID
+		}
+		if err := write(s.Path, s.Config); err != nil {
+			return ModelConfig{}, err
+		}
+		return s.Config.Models[i], nil
+	}
+	return ModelConfig{}, fmt.Errorf("model %q not found", id)
+}
+
 func defaultPath() (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -163,7 +200,7 @@ func load(path string) (Config, bool, error) {
 	}
 
 	if legacy.Model.ID == "" {
-		legacy.Model.ID = fmt.Sprintf("%s-%s", legacy.Model.Provider, legacy.Model.Name)
+		legacy.Model.ID = buildModelID(legacy.Model.Provider, legacy.Model.Name)
 	}
 	cfg = Config{
 		CurrentModel: legacy.Model.ID,
@@ -223,4 +260,21 @@ func write(path string, cfg Config) error {
 		return fmt.Errorf("write config file: %w", err)
 	}
 	return nil
+}
+
+var modelIDSanitizer = regexp.MustCompile(`[^a-z0-9]+`)
+
+func buildModelID(provider, name string) string {
+	provider = strings.TrimSpace(strings.ToLower(provider))
+	name = strings.TrimSpace(strings.ToLower(name))
+	name = strings.ReplaceAll(name, ":", "-")
+	name = modelIDSanitizer.ReplaceAllString(name, "-")
+	name = strings.Trim(name, "-")
+	if provider == "" {
+		return name
+	}
+	if name == "" {
+		return provider
+	}
+	return provider + "-" + name
 }

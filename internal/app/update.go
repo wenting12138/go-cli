@@ -161,6 +161,25 @@ func (m Model) handleModelsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if !ok {
 		return m, nil
 	}
+	if modelsPage.IsRenaming() {
+		switch msg.String() {
+		case "esc":
+			modelsPage.CancelRename()
+			m.syncViewport()
+			return m, nil
+		case "enter":
+			return m.handleRenameModel(modelsPage.SelectedModelID(), modelsPage.RenameValue())
+		}
+		cmd := modelsPage.Update(msg)
+		m.syncViewport()
+		return m, cmd
+	}
+	if msg.String() == "r" {
+		if modelsPage.StartRename() {
+			m.syncViewport()
+		}
+		return m, nil
+	}
 	if key.Matches(msg, m.keys.Send) {
 		return m.handleModelByID(modelsPage.SelectedModelID())
 	}
@@ -403,6 +422,34 @@ func (m *Model) handleModelByID(id string) (tea.Model, tea.Cmd) {
 
 	m.current = pageChat
 	m.input.Placeholder = m.currentPage().Placeholder()
+	m.syncViewport()
+	return m, nil
+}
+
+func (m *Model) handleRenameModel(id, name string) (tea.Model, tea.Cmd) {
+	modelsPage, ok := m.pages[pageModels].(*models.Page)
+	if !ok {
+		return m, nil
+	}
+
+	model, err := m.config.RenameModel(id, name)
+	if err != nil {
+		modelsPage.SystemMessage(err.Error())
+		m.syncViewport()
+		return m, nil
+	}
+
+	modelsPage.FinishRename()
+	modelsPage.SetModelsSelected(m.config.Config.Models, m.config.Config.CurrentModel, model.ID)
+	modelsPage.SystemMessage(fmt.Sprintf("Updated model to id=%s name=%s.", model.ID, model.Name))
+
+	if chatPage, ok := m.pages[pageChat].(*chat.Page); ok && model.ID == m.config.Config.CurrentModel {
+		chatPage.RefreshModel(model)
+	}
+	if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok && model.ID == m.config.Config.CurrentModel {
+		*toolsPage = *toolspage.NewPage(agenttools.Specs(model, m.mode))
+	}
+
 	m.syncViewport()
 	return m, nil
 }

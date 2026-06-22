@@ -181,6 +181,10 @@ func (p *Page) SetModel(model config.ModelConfig) {
 	p.markDirty()
 }
 
+func (p *Page) RefreshModel(model config.ModelConfig) {
+	p.model = model
+}
+
 func (p *Page) AppendStream(chunk string) {
 	if p.streamIndex < 0 || p.streamIndex >= len(p.messages) {
 		return
@@ -311,6 +315,10 @@ func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
 func (p *Page) ApplyAssistantBlocks(blocks []domain.AssistantContentBlock) {
 	if len(blocks) == 0 {
 		return
+	}
+	if p.modelStreamIndex < 0 || p.modelStreamIndex >= len(p.modelMessages) {
+		p.modelMessages = append(p.modelMessages, domain.TextMessage("assistant", ""))
+		p.modelStreamIndex = len(p.modelMessages) - 1
 	}
 	if p.modelStreamIndex >= 0 && p.modelStreamIndex < len(p.modelMessages) {
 		p.modelMessages[p.modelStreamIndex].AssistantBlocks = cloneAssistantBlocks(blocks)

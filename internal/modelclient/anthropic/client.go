@@ -62,9 +62,7 @@ func (b contentBlock) MarshalJSON() ([]byte, error) {
 
 	switch b.Type {
 	case "text":
-		if b.Text != "" {
-			payload["text"] = b.Text
-		}
+		payload["text"] = b.Text
 	case "thinking":
 		if b.Thinking != "" {
 			payload["thinking"] = b.Thinking
@@ -500,7 +498,6 @@ func toMessages(messages []domain.Message) (string, []message) {
 	systemParts := make([]string, 0, 4)
 	out := make([]message, 0, len(messages))
 	var pendingAssistant []contentBlock
-	skipToolCalls := map[string]struct{}{}
 
 	flushAssistant := func() {
 		if len(pendingAssistant) == 0 {
@@ -513,34 +510,68 @@ func toMessages(messages []domain.Message) (string, []message) {
 		pendingAssistant = nil
 	}
 
-	for _, entry := range messages {
-		if entry.Type == domain.MessageTypeToolCall {
-			if _, ok := skipToolCalls[entry.ToolCallID]; ok {
-				delete(skipToolCalls, entry.ToolCallID)
-				continue
+	for i := 0; i < len(messages); i++ {
+		entry := messages[i]
+
+		if entry.Type == domain.MessageTypeToolCall || entry.Type == domain.MessageTypeToolResult {
+			flushAssistant()
+
+			toolCalls := make([]domain.Message, 0, 2)
+			toolResults := make(map[string]domain.Message)
+
+			for ; i < len(messages); i++ {
+				current := messages[i]
+				if current.Type != domain.MessageTypeToolCall && current.Type != domain.MessageTypeToolResult {
+					i--
+					break
+				}
+
+				switch current.Type {
+				case domain.MessageTypeToolCall:
+					toolCalls = append(toolCalls, current)
+				case domain.MessageTypeToolResult:
+					if current.ToolCallID != "" {
+						toolResults[current.ToolCallID] = current
+					}
+				}
 			}
+
+			assistantBlocks := make([]contentBlock, 0, len(toolCalls))
+			resultBlocks := make([]contentBlock, 0, len(toolCalls))
+			for _, toolCall := range toolCalls {
+				toolResult, ok := toolResults[toolCall.ToolCallID]
+				if !ok {
+					continue
+				}
+				assistantBlocks = append(assistantBlocks, contentBlock{
+					Type:  "tool_use",
+					ID:    toolCall.ToolCallID,
+					Name:  toolCall.ToolName,
+					Input: cloneMap(toolCall.Args),
+				})
+				resultBlocks = append(resultBlocks, contentBlock{
+					Type:      "tool_result",
+					ToolUseID: toolResult.ToolCallID,
+					Content:   toolResult.Result,
+				})
+			}
+
+			if len(assistantBlocks) > 0 {
+				out = append(out, message{
+					Role:    "assistant",
+					Content: assistantBlocks,
+				})
+			}
+			if len(resultBlocks) > 0 {
+				out = append(out, message{
+					Role:    "user",
+					Content: resultBlocks,
+				})
+			}
+			continue
 		}
 
 		switch entry.Type {
-		case domain.MessageTypeToolCall:
-			pendingAssistant = append(pendingAssistant, contentBlock{
-				Type:  "tool_use",
-				ID:    entry.ToolCallID,
-				Name:  entry.ToolName,
-				Input: cloneMap(entry.Args),
-			})
-		case domain.MessageTypeToolResult:
-			flushAssistant()
-			out = append(out, message{
-				Role: "user",
-				Content: []contentBlock{
-					{
-						Type:      "tool_result",
-						ToolUseID: entry.ToolCallID,
-						Content:   entry.Result,
-					},
-				},
-			})
 		default:
 			if entry.ModelRole() == "system" {
 				flushAssistant()
@@ -553,11 +584,8 @@ func toMessages(messages []domain.Message) (string, []message) {
 				flushAssistant()
 			}
 			if entry.ModelRole() == "assistant" && len(entry.AssistantBlocks) > 0 {
-				for _, block := range toContentBlocks(entry.AssistantBlocks) {
+				for _, block := range toAnthropicAssistantContentBlocks(entry.AssistantBlocks) {
 					pendingAssistant = append(pendingAssistant, block)
-					if block.Type == "tool_use" && block.ID != "" {
-						skipToolCalls[block.ID] = struct{}{}
-					}
 				}
 				continue
 			}
@@ -628,9 +656,12 @@ func cloneContentBlocks(input []contentBlock) []contentBlock {
 	return cloned
 }
 
-func toContentBlocks(blocks []domain.AssistantContentBlock) []contentBlock {
+func toAnthropicAssistantContentBlocks(blocks []domain.AssistantContentBlock) []contentBlock {
 	out := make([]contentBlock, 0, len(blocks))
 	for _, block := range blocks {
+		if block.Type == "tool_use" {
+			continue
+		}
 		out = append(out, contentBlock{
 			Type:      block.Type,
 			Text:      block.Text,
