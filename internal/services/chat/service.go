@@ -53,7 +53,7 @@ func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, mes
 	agent := react.New(client, model, tools.Build(model, mode), s.promptBuilder, systemPrompt)
 
 	requestID := fmt.Sprintf("chat-%d", time.Now().UnixNano())
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	s.storeCancel(requestID, cancel)
 	s.bus.Publish(events.ChatStreamStarted{RequestID: requestID})
 

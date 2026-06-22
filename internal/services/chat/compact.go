@@ -48,7 +48,7 @@ func (s *Service) Compact(model config.ModelConfig, systemPrompt string, message
 	}
 
 	var chunks []string
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	err = client.StreamChat(ctx, protocol.ChatRequest{

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"go-cli/internal/config"
 	"go-cli/internal/modelclient/endpointutil"
@@ -179,7 +178,7 @@ type toolUseAccumulator struct {
 func New(model config.ModelConfig) *Client {
 	return &Client{
 		model:  model,
-		client: &http.Client{Timeout: 90 * time.Second},
+		client: &http.Client{},
 	}
 }
 
