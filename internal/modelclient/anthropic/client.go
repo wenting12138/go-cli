@@ -438,6 +438,7 @@ func flushToolUses(accumulators map[int]*toolUseAccumulator, onEvent func(protoc
 		}); err != nil {
 			return err
 		}
+		delete(accumulators, index)
 	}
 	return nil
 }
@@ -498,6 +499,7 @@ func toMessages(messages []domain.Message) (string, []message) {
 	systemParts := make([]string, 0, 4)
 	out := make([]message, 0, len(messages))
 	var pendingAssistant []contentBlock
+	usedToolUseIDs := make(map[string]int)
 
 	flushAssistant := func() {
 		if len(pendingAssistant) == 0 {
@@ -543,15 +545,16 @@ func toMessages(messages []domain.Message) (string, []message) {
 				if !ok {
 					continue
 				}
+				toolUseID := uniqueToolUseID(toolCall.ToolCallID, usedToolUseIDs)
 				assistantBlocks = append(assistantBlocks, contentBlock{
 					Type:  "tool_use",
-					ID:    toolCall.ToolCallID,
+					ID:    toolUseID,
 					Name:  toolCall.ToolName,
 					Input: cloneMap(toolCall.Args),
 				})
 				resultBlocks = append(resultBlocks, contentBlock{
 					Type:      "tool_result",
-					ToolUseID: toolResult.ToolCallID,
+					ToolUseID: toolUseID,
 					Content:   toolResult.Result,
 				})
 			}
@@ -584,19 +587,57 @@ func toMessages(messages []domain.Message) (string, []message) {
 				flushAssistant()
 			}
 			if entry.ModelRole() == "assistant" && len(entry.AssistantBlocks) > 0 {
-				for _, block := range toAnthropicAssistantContentBlocks(entry.AssistantBlocks) {
-					pendingAssistant = append(pendingAssistant, block)
+				flushAssistant()
+				blocks, toolUseIDs, toolUseOrder := normalizeAnthropicAssistantBlocks(entry.AssistantBlocks, usedToolUseIDs)
+				if len(blocks) > 0 {
+					out = append(out, message{
+						Role:    "assistant",
+						Content: blocks,
+					})
+				}
+				if len(toolUseOrder) > 0 {
+					resultByToolUseID := make(map[string]contentBlock, len(toolUseOrder))
+					consumedUntil := i
+					for j := i + 1; j < len(messages); j++ {
+						current := messages[j]
+						if current.Type != domain.MessageTypeToolCall && current.Type != domain.MessageTypeToolResult {
+							break
+						}
+						mappedID, tracked := toolUseIDs[current.ToolCallID]
+						if !tracked {
+							break
+						}
+						consumedUntil = j
+						if current.Type == domain.MessageTypeToolResult {
+							if _, exists := resultByToolUseID[mappedID]; exists {
+								continue
+							}
+							resultByToolUseID[mappedID] = contentBlock{
+								Type:      "tool_result",
+								ToolUseID: mappedID,
+								Content:   current.Result,
+							}
+						}
+					}
+					resultBlocks := make([]contentBlock, 0, len(toolUseOrder))
+					for _, toolUseID := range toolUseOrder {
+						resultBlock, ok := resultByToolUseID[toolUseID]
+						if !ok {
+							continue
+						}
+						resultBlocks = append(resultBlocks, resultBlock)
+					}
+					if len(resultBlocks) > 0 {
+						out = append(out, message{
+							Role:    "user",
+							Content: resultBlocks,
+						})
+					}
+					i = consumedUntil
 				}
 				continue
 			}
 			blocks := make([]contentBlock, 0, 2)
-			if entry.ModelRole() == "assistant" && strings.TrimSpace(entry.Reasoning) != "" {
-				blocks = append(blocks, contentBlock{
-					Type:      "thinking",
-					Thinking:  entry.Reasoning,
-					Signature: entry.ReasoningSignature,
-				})
-			}
 			if entry.Content != "" || len(blocks) == 0 {
 				blocks = append(blocks, contentBlock{
 					Type: "text",
@@ -656,26 +697,64 @@ func cloneContentBlocks(input []contentBlock) []contentBlock {
 	return cloned
 }
 
-func toAnthropicAssistantContentBlocks(blocks []domain.AssistantContentBlock) []contentBlock {
+func normalizeAnthropicAssistantBlocks(blocks []domain.AssistantContentBlock, usedToolUseIDs map[string]int) ([]contentBlock, map[string]string, []string) {
 	out := make([]contentBlock, 0, len(blocks))
+	toolUseIDs := make(map[string]string)
+	toolUseOrder := make([]string, 0, 2)
 	for _, block := range blocks {
-		if block.Type == "tool_use" {
-			continue
+		switch block.Type {
+		case "tool_use":
+			if strings.TrimSpace(block.Name) == "" {
+				continue
+			}
+			originalID := strings.TrimSpace(block.ID)
+			mappedID := uniqueToolUseID(originalID, usedToolUseIDs)
+			if originalID != "" {
+				if _, exists := toolUseIDs[originalID]; exists {
+					continue
+				}
+				toolUseIDs[originalID] = mappedID
+			}
+			toolUseOrder = append(toolUseOrder, mappedID)
+			out = append(out, contentBlock{
+				Type:  "tool_use",
+				ID:    mappedID,
+				Name:  block.Name,
+				Input: cloneMap(block.Input),
+			})
+		case "thinking":
+			if strings.TrimSpace(block.Thinking) == "" || strings.TrimSpace(block.Signature) == "" {
+				continue
+			}
+			out = append(out, contentBlock{
+				Type:      "thinking",
+				Thinking:  block.Thinking,
+				Signature: block.Signature,
+			})
+		case "redacted_thinking":
+			if strings.TrimSpace(block.Data) == "" {
+				continue
+			}
+			out = append(out, contentBlock{
+				Type: "redacted_thinking",
+				Data: block.Data,
+			})
+		case "text":
+			out = append(out, contentBlock{
+				Type: "text",
+				Text: block.Text,
+			})
+		default:
+			if strings.TrimSpace(block.Text) == "" {
+				continue
+			}
+			out = append(out, contentBlock{
+				Type: "text",
+				Text: block.Text,
+			})
 		}
-		out = append(out, contentBlock{
-			Type:      block.Type,
-			Text:      block.Text,
-			Thinking:  block.Thinking,
-			Signature: block.Signature,
-			ID:        block.ID,
-			Name:      block.Name,
-			Input:     cloneMap(block.Input),
-			ToolUseID: block.ToolUseID,
-			Content:   block.Content,
-			Data:      block.Data,
-		})
 	}
-	return out
+	return out, toolUseIDs, toolUseOrder
 }
 
 func defaultMaxTokens(contextWindow int) int {
@@ -695,4 +774,26 @@ func defaultMaxTokens(contextWindow int) int {
 		return 8192
 	}
 	return contextWindow / 8
+}
+
+func uniqueToolUseID(id string, used map[string]int) string {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		id = "tool-call"
+	}
+	if _, exists := used[id]; !exists {
+		used[id] = 1
+		return id
+	}
+	base := id
+	index := used[base]
+	for {
+		candidate := fmt.Sprintf("%s-%d", base, index)
+		if _, exists := used[candidate]; !exists {
+			used[base] = index + 1
+			used[candidate] = 1
+			return candidate
+		}
+		index++
+	}
 }

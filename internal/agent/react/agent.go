@@ -122,7 +122,7 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 				return fmt.Errorf("model returned no text and no tool calls")
 			}
 
-			messages = append(messages, domain.TextMessage("assistant", final))
+			messages = append(messages, assistantMessage(final, result.AssistantBlocks))
 			if hooks.OnFinalStart != nil && !streamStarted {
 				hooks.OnFinalStart()
 			}
@@ -137,8 +137,9 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 			return nil
 		}
 
-		if text := strings.TrimSpace(strings.Join(result.TextChunks, "")); text != "" {
-			messages = append(messages, domain.TextMessage("assistant", text))
+		assistantText := strings.TrimSpace(strings.Join(result.TextChunks, ""))
+		if assistantText != "" || len(result.AssistantBlocks) > 0 {
+			messages = append(messages, assistantMessage(assistantText, result.AssistantBlocks))
 		}
 
 		for index, toolCall := range result.ToolCalls {
@@ -324,4 +325,12 @@ func cloneAssistantBlocks(blocks []domain.AssistantContentBlock) []domain.Assist
 		out = append(out, cloned)
 	}
 	return out
+}
+
+func assistantMessage(content string, blocks []domain.AssistantContentBlock) domain.Message {
+	message := domain.TextMessage("assistant", content)
+	if len(blocks) > 0 {
+		message.AssistantBlocks = cloneAssistantBlocks(blocks)
+	}
+	return message
 }
