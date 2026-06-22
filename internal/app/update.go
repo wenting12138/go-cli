@@ -11,6 +11,7 @@ import (
 	agenttools "go-cli/internal/agent/tools"
 	"go-cli/internal/agentmode"
 	"go-cli/internal/events"
+	"go-cli/internal/modelclient/protocol"
 	"go-cli/internal/modules/chat"
 	"go-cli/internal/modules/chat/domain"
 	"go-cli/internal/modules/models"
@@ -42,9 +43,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncViewport()
 		return m, nil
 	case eventMsg:
-		m.handleEvent(msg.event)
-		m.syncViewport()
-		return m, tea.Batch(waitEventCmd(m.events), m.animationCmd())
+		shouldSync := m.handleEvent(msg.event)
+		if shouldSync {
+			m.syncViewport()
+		}
+		return m, tea.Batch(waitEventCmd(m.events), m.animationCmd(), m.streamFlushCmd())
 	case animationTickMsg:
 		if m.hasTypingIndicator() {
 			m.typingIndicatorFrame = (m.typingIndicatorFrame + 1) % 3
@@ -52,6 +55,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.animationCmd()
 		}
 		return m, nil
+	case streamFlushTickMsg:
+		if !m.streamFlushPending {
+			return m, nil
+		}
+		m.streamFlushPending = false
+		m.syncViewport()
+		return m, m.streamFlushCmd()
 	}
 
 	var cmd tea.Cmd
@@ -237,6 +247,7 @@ func (m Model) handleChatInput(text string) (tea.Model, tea.Cmd) {
 	}
 
 	chatPage.HandleInput(text)
+	m.lastMetrics = protocol.ResponseMetrics{}
 	activeModel, err := m.config.ActiveModel()
 	if err != nil {
 		chatPage.FailStream(err.Error())
@@ -447,58 +458,80 @@ func (m *Model) handleResumeByID(id string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) handleEvent(event any) {
+func (m *Model) handleEvent(event any) bool {
 	chatPage, ok := m.pages[pageChat].(*chat.Page)
 	if !ok {
-		return
+		return false
 	}
 
 	switch e := event.(type) {
 	case events.ChatStreamStarted:
 		chatPage.BeginRequest(e.RequestID)
 		m.typingIndicatorFrame = 0
+		m.streamFlushPending = false
+		return true
+	case events.ChatAssistantBlocks:
+		if chatPage.HasActiveRequest(e.RequestID) {
+			chatPage.ApplyAssistantBlocks(e.Blocks)
+		}
+		return true
 	case events.ChatThinkingStarted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.BeginThinking(e.RequestID)
 		}
+		return true
 	case events.ChatThinkingChunk:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.AppendThinking(e.Chunk)
 			chatPage.AppendReasoning(e.Chunk)
+			m.streamFlushPending = true
 		}
+		return false
 	case events.ChatThinkingSignature:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.SetReasoningSignature(e.Signature)
 		}
+		return true
 	case events.ChatResponseStarted:
 		chatPage.BeginAssistantStream(e.RequestID)
+		return true
 	case events.ChatStreamChunk:
 		if chatPage.HasActiveStream(e.RequestID) {
 			chatPage.AppendStream(e.Chunk)
+			m.streamFlushPending = true
 		}
+		return false
 	case events.ChatToolCallStarted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.AppendToolCall(e.ToolCallID, e.Tool, e.Args)
 			m.persistActiveChat()
 		}
+		return true
 	case events.ChatToolCallCompleted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.AppendToolResult(e.ToolCallID, e.Tool, e.Result)
 			m.persistActiveChat()
 		}
+		return true
 	case events.ChatStreamFailed:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FailStream(e.Err)
 			m.typingIndicatorFrame = 0
+			m.streamFlushPending = false
 			m.persistActiveChat()
 		}
+		return true
 	case events.ChatStreamCompleted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FinishStream()
 			m.typingIndicatorFrame = 0
+			m.streamFlushPending = false
+			m.lastMetrics = e.Metrics
 			m.persistActiveChat()
 		}
+		return true
 	}
+	return false
 }
 
 func (m *Model) persistActiveChat() {
@@ -566,4 +599,11 @@ func (m Model) animationCmd() tea.Cmd {
 		return nil
 	}
 	return animationTickCmd()
+}
+
+func (m Model) streamFlushCmd() tea.Cmd {
+	if !m.streamFlushPending {
+		return nil
+	}
+	return streamFlushTickCmd()
 }

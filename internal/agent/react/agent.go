@@ -29,11 +29,13 @@ type InterruptingTool interface {
 type Hooks struct {
 	OnToolStart         func(name, toolCallID string, args map[string]any)
 	OnToolResult        func(name, toolCallID, result string)
+	OnAssistantBlocks   func(blocks []domain.AssistantContentBlock)
 	OnThinkingStart     func()
 	OnThinkingChunk     func(chunk string)
 	OnThinkingSignature func(signature string)
 	OnFinalStart        func()
 	OnFinalChunk        func(chunk string)
+	OnMetrics           func(metrics protocol.ResponseMetrics)
 }
 
 type Agent struct {
@@ -46,8 +48,10 @@ type Agent struct {
 }
 
 type collectResult struct {
-	TextChunks []string
-	ToolCalls  []protocol.ToolCall
+	TextChunks      []string
+	ToolCalls       []protocol.ToolCall
+	AssistantBlocks []domain.AssistantContentBlock
+	Metrics         protocol.ResponseMetrics
 }
 
 func New(client modelclient.Client, model config.ModelConfig, tools []Tool, promptBuilder *prompt.Builder, systemPrompt string) *Agent {
@@ -100,9 +104,16 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 			if hooks.OnFinalChunk != nil {
 				hooks.OnFinalChunk(chunk)
 			}
+		}, func(metrics protocol.ResponseMetrics) {
+			if hooks.OnMetrics != nil {
+				hooks.OnMetrics(metrics)
+			}
 		})
 		if err != nil {
 			return err
+		}
+		if hooks.OnAssistantBlocks != nil && len(result.AssistantBlocks) > 0 {
+			hooks.OnAssistantBlocks(cloneAssistantBlocks(result.AssistantBlocks))
 		}
 
 		if len(result.ToolCalls) == 0 {
@@ -178,7 +189,7 @@ func (a *Agent) Run(ctx context.Context, history []domain.Message, hooks Hooks) 
 	return fmt.Errorf("agent exceeded max steps without final answer")
 }
 
-func (a *Agent) collect(ctx context.Context, messages []domain.Message, onThinkingStart func(), onThinkingChunk func(string), onThinkingSignature func(string), onTextChunk func(string)) (collectResult, error) {
+func (a *Agent) collect(ctx context.Context, messages []domain.Message, onThinkingStart func(), onThinkingChunk func(string), onThinkingSignature func(string), onTextChunk func(string), onMetrics func(protocol.ResponseMetrics)) (collectResult, error) {
 	result := collectResult{}
 	thinkingStarted := false
 	request := protocol.ChatRequest{
@@ -211,6 +222,13 @@ func (a *Agent) collect(ctx context.Context, messages []domain.Message, onThinki
 				Name:      event.ToolCall.Name,
 				Arguments: cloneArgs(event.ToolCall.Arguments),
 			})
+		case protocol.EventTypeAssistantBlocks:
+			result.AssistantBlocks = cloneAssistantBlocks(event.AssistantBlocks)
+		case protocol.EventTypeMetrics:
+			result.Metrics = event.Metrics
+			if onMetrics != nil {
+				onMetrics(event.Metrics)
+			}
 		}
 		return nil
 	})
@@ -291,4 +309,19 @@ func cloneArgs(args map[string]any) map[string]any {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func cloneAssistantBlocks(blocks []domain.AssistantContentBlock) []domain.AssistantContentBlock {
+	out := make([]domain.AssistantContentBlock, 0, len(blocks))
+	for _, block := range blocks {
+		cloned := block
+		if len(block.Input) > 0 {
+			cloned.Input = make(map[string]any, len(block.Input))
+			for key, value := range block.Input {
+				cloned.Input[key] = value
+			}
+		}
+		out = append(out, cloned)
+	}
+	return out
 }

@@ -1,7 +1,17 @@
 package events
 
+import (
+	"go-cli/internal/modelclient/protocol"
+	"go-cli/internal/modules/chat/domain"
+)
+
 type ChatStreamStarted struct {
 	RequestID string
+}
+
+type ChatAssistantBlocks struct {
+	RequestID string
+	Blocks    []domain.AssistantContentBlock
 }
 
 type ChatResponseStarted struct {
@@ -34,6 +44,7 @@ type ChatStreamFailed struct {
 
 type ChatStreamCompleted struct {
 	RequestID string
+	Metrics   protocol.ResponseMetrics
 }
 
 type ChatToolCallStarted struct {

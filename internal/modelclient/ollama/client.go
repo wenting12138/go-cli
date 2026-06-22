@@ -56,8 +56,15 @@ type toolFunction struct {
 }
 
 type response struct {
-	Message message `json:"message"`
-	Error   string  `json:"error,omitempty"`
+	Message            message `json:"message"`
+	Error              string  `json:"error,omitempty"`
+	Done               bool    `json:"done,omitempty"`
+	TotalDuration      int64   `json:"total_duration,omitempty"`
+	LoadDuration       int64   `json:"load_duration,omitempty"`
+	PromptEvalCount    int     `json:"prompt_eval_count,omitempty"`
+	PromptEvalDuration int64   `json:"prompt_eval_duration,omitempty"`
+	EvalCount          int     `json:"eval_count,omitempty"`
+	EvalDuration       int64   `json:"eval_duration,omitempty"`
 }
 
 func New(model config.ModelConfig) *Client {
@@ -138,6 +145,22 @@ func (c *Client) StreamChat(ctx context.Context, chatRequest protocol.ChatReques
 					ID:        fmt.Sprintf("call-%d", index+1),
 					Name:      toolCall.Function.Name,
 					Arguments: cloneMap(toolCall.Function.Arguments),
+				},
+			}); err != nil {
+				return err
+			}
+		}
+
+		if parsed.Done {
+			if err := onEvent(protocol.Event{
+				Type: protocol.EventTypeMetrics,
+				Metrics: protocol.ResponseMetrics{
+					TotalDuration:      parsed.TotalDuration,
+					LoadDuration:       parsed.LoadDuration,
+					PromptEvalCount:    parsed.PromptEvalCount,
+					PromptEvalDuration: parsed.PromptEvalDuration,
+					EvalCount:          parsed.EvalCount,
+					EvalDuration:       parsed.EvalDuration,
 				},
 			}); err != nil {
 				return err

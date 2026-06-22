@@ -184,3 +184,9 @@ func animationTickCmd() tea.Cmd {
 		return animationTickMsg{}
 	})
 }
+
+func streamFlushTickCmd() tea.Cmd {
+	return tea.Tick(33*time.Millisecond, func(time.Time) tea.Msg {
+		return streamFlushTickMsg{}
+	})
+}

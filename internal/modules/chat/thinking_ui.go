@@ -71,7 +71,7 @@ func (p *Page) AppendThinking(chunk string) {
 		return
 	}
 	p.messages[p.thinkingIndex].Content += chunk
-	p.markDirty()
+	p.markTailDirty()
 }
 
 func renderThinkingCollapsed(width int, content string) string {

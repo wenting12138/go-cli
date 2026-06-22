@@ -53,6 +53,7 @@ type contentBlock struct {
 	Input     map[string]any `json:"input,omitempty"`
 	ToolUseID string         `json:"tool_use_id,omitempty"`
 	Content   string         `json:"content,omitempty"`
+	Data      string         `json:"data,omitempty"`
 }
 
 func (b contentBlock) MarshalJSON() ([]byte, error) {
@@ -89,6 +90,10 @@ func (b contentBlock) MarshalJSON() ([]byte, error) {
 			payload["tool_use_id"] = b.ToolUseID
 		}
 		payload["content"] = b.Content
+	case "redacted_thinking":
+		if b.Data != "" {
+			payload["data"] = b.Data
+		}
 	default:
 		if b.Text != "" {
 			payload["text"] = b.Text
@@ -107,6 +112,9 @@ func (b contentBlock) MarshalJSON() ([]byte, error) {
 		}
 		if b.Content != "" {
 			payload["content"] = b.Content
+		}
+		if b.Data != "" {
+			payload["data"] = b.Data
 		}
 		if b.Thinking != "" {
 			payload["thinking"] = b.Thinking
@@ -142,11 +150,14 @@ type payloadDelta struct {
 }
 
 type payloadContentBlock struct {
-	Type  string         `json:"type,omitempty"`
-	Text  string         `json:"text,omitempty"`
-	ID    string         `json:"id,omitempty"`
-	Name  string         `json:"name,omitempty"`
-	Input map[string]any `json:"input,omitempty"`
+	Type      string         `json:"type,omitempty"`
+	Text      string         `json:"text,omitempty"`
+	Thinking  string         `json:"thinking,omitempty"`
+	Signature string         `json:"signature,omitempty"`
+	ID        string         `json:"id,omitempty"`
+	Name      string         `json:"name,omitempty"`
+	Input     map[string]any `json:"input,omitempty"`
+	Data      string         `json:"data,omitempty"`
 }
 
 type payloadError struct {
@@ -155,9 +166,14 @@ type payloadError struct {
 }
 
 type toolUseAccumulator struct {
+	Type          string
+	Text          strings.Builder
+	Thinking      strings.Builder
+	Signature     string
 	ID            string
 	Name          string
 	ArgumentsJSON strings.Builder
+	Data          string
 }
 
 func New(model config.ModelConfig) *Client {
@@ -267,27 +283,43 @@ func (c *Client) handleEvent(eventName, data string, accumulators map[int]*toolU
 
 	switch eventName {
 	case "content_block_start":
-		if parsed.ContentBlock.Type == "text" && parsed.ContentBlock.Text != "" {
-			return onEvent(protocol.Event{
-				Type: protocol.EventTypeTextDelta,
-				Text: parsed.ContentBlock.Text,
-			})
+		acc := &toolUseAccumulator{
+			Type:      parsed.ContentBlock.Type,
+			Signature: parsed.ContentBlock.Signature,
+			ID:        parsed.ContentBlock.ID,
+			Name:      parsed.ContentBlock.Name,
+			Data:      parsed.ContentBlock.Data,
 		}
-		if parsed.ContentBlock.Type == "tool_use" {
-			acc := &toolUseAccumulator{
-				ID:   parsed.ContentBlock.ID,
-				Name: parsed.ContentBlock.Name,
-			}
-			if len(parsed.ContentBlock.Input) > 0 {
-				data, err := json.Marshal(parsed.ContentBlock.Input)
-				if err != nil {
-					return fmt.Errorf("marshal anthropic tool input: %w", err)
-				}
-				acc.ArgumentsJSON.Write(data)
-			}
-			accumulators[parsed.Index] = acc
+		if parsed.ContentBlock.Text != "" {
+			acc.Text.WriteString(parsed.ContentBlock.Text)
 		}
-		if parsed.ContentBlock.Type == "redacted_thinking" {
+		if parsed.ContentBlock.Thinking != "" {
+			acc.Thinking.WriteString(parsed.ContentBlock.Thinking)
+		}
+		if len(parsed.ContentBlock.Input) > 0 {
+			data, err := json.Marshal(parsed.ContentBlock.Input)
+			if err != nil {
+				return fmt.Errorf("marshal anthropic tool input: %w", err)
+			}
+			acc.ArgumentsJSON.Write(data)
+		}
+		accumulators[parsed.Index] = acc
+		switch parsed.ContentBlock.Type {
+		case "text":
+			if parsed.ContentBlock.Text != "" {
+				return onEvent(protocol.Event{
+					Type: protocol.EventTypeTextDelta,
+					Text: parsed.ContentBlock.Text,
+				})
+			}
+		case "thinking":
+			if parsed.ContentBlock.Thinking != "" {
+				return onEvent(protocol.Event{
+					Type: protocol.EventTypeThinkingDelta,
+					Text: parsed.ContentBlock.Thinking,
+				})
+			}
+		case "redacted_thinking":
 			return onEvent(protocol.Event{
 				Type: protocol.EventTypeRedactedThinking,
 				Text: "[redacted thinking omitted]",
@@ -299,6 +331,12 @@ func (c *Client) handleEvent(eventName, data string, accumulators map[int]*toolU
 			if parsed.Delta.Text == "" {
 				return nil
 			}
+			acc, ok := accumulators[parsed.Index]
+			if !ok {
+				acc = &toolUseAccumulator{Type: "text"}
+				accumulators[parsed.Index] = acc
+			}
+			acc.Text.WriteString(parsed.Delta.Text)
 			return onEvent(protocol.Event{
 				Type: protocol.EventTypeTextDelta,
 				Text: parsed.Delta.Text,
@@ -307,6 +345,12 @@ func (c *Client) handleEvent(eventName, data string, accumulators map[int]*toolU
 			if parsed.Delta.Thinking == "" {
 				return nil
 			}
+			acc, ok := accumulators[parsed.Index]
+			if !ok {
+				acc = &toolUseAccumulator{Type: "thinking"}
+				accumulators[parsed.Index] = acc
+			}
+			acc.Thinking.WriteString(parsed.Delta.Thinking)
 			return onEvent(protocol.Event{
 				Type: protocol.EventTypeThinkingDelta,
 				Text: parsed.Delta.Thinking,
@@ -315,6 +359,12 @@ func (c *Client) handleEvent(eventName, data string, accumulators map[int]*toolU
 			if parsed.Delta.Signature == "" {
 				return nil
 			}
+			acc, ok := accumulators[parsed.Index]
+			if !ok {
+				acc = &toolUseAccumulator{Type: "thinking"}
+				accumulators[parsed.Index] = acc
+			}
+			acc.Signature = parsed.Delta.Signature
 			return onEvent(protocol.Event{
 				Type: protocol.EventTypeThinkingSignature,
 				Text: parsed.Delta.Signature,
@@ -332,6 +382,12 @@ func (c *Client) handleEvent(eventName, data string, accumulators map[int]*toolU
 			return fmt.Errorf("anthropic error: %s", parsed.Error.Message)
 		}
 	case "message_stop":
+		if err := onEvent(protocol.Event{
+			Type:            protocol.EventTypeAssistantBlocks,
+			AssistantBlocks: assistantBlocksFromAccumulators(accumulators),
+		}); err != nil {
+			return err
+		}
 		return flushToolUses(accumulators, onEvent)
 	}
 
@@ -365,7 +421,10 @@ func flushToolUses(accumulators map[int]*toolUseAccumulator, onEvent func(protoc
 
 	for _, index := range indexes {
 		acc := accumulators[index]
-		if acc == nil || acc.Name == "" {
+		if acc == nil || acc.Type != "tool_use" {
+			continue
+		}
+		if acc.Name == "" {
 			return fmt.Errorf("anthropic returned incomplete tool use at index %d", index)
 		}
 		args, err := parseArguments(acc.ArgumentsJSON.String())
@@ -382,9 +441,45 @@ func flushToolUses(accumulators map[int]*toolUseAccumulator, onEvent func(protoc
 		}); err != nil {
 			return err
 		}
-		delete(accumulators, index)
 	}
 	return nil
+}
+
+func assistantBlocksFromAccumulators(accumulators map[int]*toolUseAccumulator) []domain.AssistantContentBlock {
+	if len(accumulators) == 0 {
+		return nil
+	}
+
+	indexes := make([]int, 0, len(accumulators))
+	for index := range accumulators {
+		indexes = append(indexes, index)
+	}
+	sort.Ints(indexes)
+
+	blocks := make([]domain.AssistantContentBlock, 0, len(indexes))
+	for _, index := range indexes {
+		acc := accumulators[index]
+		if acc == nil || acc.Type == "" {
+			continue
+		}
+
+		block := domain.AssistantContentBlock{
+			Type:      acc.Type,
+			Text:      acc.Text.String(),
+			Thinking:  acc.Thinking.String(),
+			Signature: acc.Signature,
+			ID:        acc.ID,
+			Name:      acc.Name,
+			Data:      acc.Data,
+		}
+		if acc.Type == "tool_use" {
+			if args, err := parseArguments(acc.ArgumentsJSON.String()); err == nil {
+				block.Input = args
+			}
+		}
+		blocks = append(blocks, block)
+	}
+	return blocks
 }
 
 func parseArguments(raw string) (map[string]any, error) {
@@ -405,22 +500,38 @@ func parseArguments(raw string) (map[string]any, error) {
 func toMessages(messages []domain.Message) (string, []message) {
 	systemParts := make([]string, 0, 4)
 	out := make([]message, 0, len(messages))
+	var pendingAssistant []contentBlock
+	skipToolCalls := map[string]struct{}{}
+
+	flushAssistant := func() {
+		if len(pendingAssistant) == 0 {
+			return
+		}
+		out = append(out, message{
+			Role:    "assistant",
+			Content: cloneContentBlocks(pendingAssistant),
+		})
+		pendingAssistant = nil
+	}
 
 	for _, entry := range messages {
+		if entry.Type == domain.MessageTypeToolCall {
+			if _, ok := skipToolCalls[entry.ToolCallID]; ok {
+				delete(skipToolCalls, entry.ToolCallID)
+				continue
+			}
+		}
+
 		switch entry.Type {
 		case domain.MessageTypeToolCall:
-			out = append(out, message{
-				Role: "assistant",
-				Content: []contentBlock{
-					{
-						Type:  "tool_use",
-						ID:    entry.ToolCallID,
-						Name:  entry.ToolName,
-						Input: cloneMap(entry.Args),
-					},
-				},
+			pendingAssistant = append(pendingAssistant, contentBlock{
+				Type:  "tool_use",
+				ID:    entry.ToolCallID,
+				Name:  entry.ToolName,
+				Input: cloneMap(entry.Args),
 			})
 		case domain.MessageTypeToolResult:
+			flushAssistant()
 			out = append(out, message{
 				Role: "user",
 				Content: []contentBlock{
@@ -433,8 +544,21 @@ func toMessages(messages []domain.Message) (string, []message) {
 			})
 		default:
 			if entry.ModelRole() == "system" {
+				flushAssistant()
 				if strings.TrimSpace(entry.Content) != "" {
 					systemParts = append(systemParts, entry.Content)
+				}
+				continue
+			}
+			if entry.ModelRole() != "assistant" {
+				flushAssistant()
+			}
+			if entry.ModelRole() == "assistant" && len(entry.AssistantBlocks) > 0 {
+				for _, block := range toContentBlocks(entry.AssistantBlocks) {
+					pendingAssistant = append(pendingAssistant, block)
+					if block.Type == "tool_use" && block.ID != "" {
+						skipToolCalls[block.ID] = struct{}{}
+					}
 				}
 				continue
 			}
@@ -452,12 +576,17 @@ func toMessages(messages []domain.Message) (string, []message) {
 					Text: entry.Content,
 				})
 			}
+			if entry.ModelRole() == "assistant" {
+				pendingAssistant = append(pendingAssistant, blocks...)
+				continue
+			}
 			out = append(out, message{
 				Role:    entry.ModelRole(),
 				Content: blocks,
 			})
 		}
 	}
+	flushAssistant()
 
 	return strings.TrimSpace(strings.Join(systemParts, "\n\n")), out
 }
@@ -483,6 +612,40 @@ func cloneMap(input map[string]any) map[string]any {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func cloneContentBlocks(input []contentBlock) []contentBlock {
+	if len(input) == 0 {
+		return nil
+	}
+	cloned := make([]contentBlock, 0, len(input))
+	for _, block := range input {
+		next := block
+		if block.Input != nil {
+			next.Input = cloneMap(block.Input)
+		}
+		cloned = append(cloned, next)
+	}
+	return cloned
+}
+
+func toContentBlocks(blocks []domain.AssistantContentBlock) []contentBlock {
+	out := make([]contentBlock, 0, len(blocks))
+	for _, block := range blocks {
+		out = append(out, contentBlock{
+			Type:      block.Type,
+			Text:      block.Text,
+			Thinking:  block.Thinking,
+			Signature: block.Signature,
+			ID:        block.ID,
+			Name:      block.Name,
+			Input:     cloneMap(block.Input),
+			ToolUseID: block.ToolUseID,
+			Content:   block.Content,
+			Data:      block.Data,
+		})
+	}
+	return out
 }
 
 func defaultMaxTokens(contextWindow int) int {

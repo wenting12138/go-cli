@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"go-cli/internal/modelclient/protocol"
 	"go-cli/internal/modules/chat"
 	"go-cli/internal/modules/chat/domain"
 )
@@ -75,6 +76,9 @@ func (m Model) renderModelStatus() string {
 		formatContextWindow(model.ContextWindow),
 		m.focus,
 	)
+	if metrics := formatMetrics(m.lastMetrics); metrics != "" {
+		line += "  " + metrics
+	}
 	return statusStyle.Width(width).Render(line)
 }
 
@@ -201,6 +205,45 @@ func roughTokens(text string) int {
 		return 1
 	}
 	return tokens
+}
+
+func formatMetrics(metrics protocol.ResponseMetrics) string {
+	parts := make([]string, 0, 4)
+	if metrics.FirstTokenDuration > 0 {
+		parts = append(parts, "first="+formatDuration(metrics.FirstTokenDuration))
+	}
+	if metrics.TotalDuration > 0 {
+		parts = append(parts, "total="+formatDuration(metrics.TotalDuration))
+	}
+	if metrics.PromptEvalDuration > 0 || metrics.PromptEvalCount > 0 {
+		part := "prompt=" + formatDuration(metrics.PromptEvalDuration)
+		if metrics.PromptEvalCount > 0 {
+			part += fmt.Sprintf("/%d", metrics.PromptEvalCount)
+		}
+		parts = append(parts, part)
+	}
+	if metrics.EvalDuration > 0 || metrics.EvalCount > 0 {
+		part := "eval=" + formatDuration(metrics.EvalDuration)
+		if metrics.EvalCount > 0 {
+			part += fmt.Sprintf("/%d", metrics.EvalCount)
+		}
+		parts = append(parts, part)
+	}
+	if metrics.LoadDuration > 0 {
+		parts = append(parts, "load="+formatDuration(metrics.LoadDuration))
+	}
+	return strings.Join(parts, "  ")
+}
+
+func formatDuration(nanos int64) string {
+	if nanos <= 0 {
+		return "0ms"
+	}
+	ms := nanos / 1_000_000
+	if ms < 1000 {
+		return fmt.Sprintf("%dms", ms)
+	}
+	return fmt.Sprintf("%.2fs", float64(nanos)/1_000_000_000)
 }
 
 func (m Model) viewportLineAtMouse(msg tea.MouseMsg) (int, bool) {

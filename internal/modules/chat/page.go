@@ -41,10 +41,20 @@ type Page struct {
 	streamRequestID  string
 	cachedWidth      int
 	cachedContent    string
+	cachedPrefix     renderCache
 	frozenRendered   []string
 	frozenWidth      int
 	toolHits         []toolHit
 	dirty            bool
+}
+
+type renderCache struct {
+	width     int
+	tailStart int
+	content   string
+	lineCount int
+	toolHits  []toolHit
+	dirty     bool
 }
 
 type toolHit struct {
@@ -67,6 +77,10 @@ func NewPage(model config.ModelConfig) *Page {
 		thinkingIndex:    -1,
 		modelStreamIndex: -1,
 		dirty:            true,
+		cachedPrefix: renderCache{
+			tailStart: -1,
+			dirty:     true,
+		},
 		messages: []chatui.Message{
 			chatui.TextMessage(chatui.TypeSystem, startupLogo()),
 		},
@@ -90,36 +104,12 @@ func (p *Page) Content(width int) string {
 		p.rebuildFrozenRendered(width)
 	}
 
-	var lines []string
-	lineOffset := 0
-	p.toolHits = p.toolHits[:0]
-	for i, message := range p.messages {
-		if i > 0 && needsReplyDivider(p.messages[i-1], message) {
-			divider := renderReplyDivider(width)
-			if len(lines) > 0 {
-				lineOffset++
-			}
-			lines = append(lines, divider)
-			lineOffset += lipgloss.Height(divider)
-		}
-		rendered := p.renderMessage(width, i, message)
-		if len(lines) > 0 {
-			lineOffset++
-		}
-		startLine := lineOffset
-		lines = append(lines, rendered)
-		lineOffset += lipgloss.Height(rendered)
-		if message.Type == chatui.TypeTool {
-			p.toolHits = append(p.toolHits, toolHit{
-				messageIndex: i,
-				toolName:     message.ToolName,
-				startLine:    startLine,
-				endLine:      lineOffset - 1,
-			})
-		}
+	if tailStart, ok := p.activeTailStart(); ok {
+		p.renderWithActiveTail(width, tailStart)
+	} else {
+		p.renderAll(width)
 	}
 	p.cachedWidth = width
-	p.cachedContent = strings.Join(lines, "\n\n")
 	p.dirty = false
 	return p.cachedContent
 }
@@ -191,7 +181,7 @@ func (p *Page) AppendStream(chunk string) {
 	if p.modelStreamIndex >= 0 && p.modelStreamIndex < len(p.modelMessages) {
 		p.modelMessages[p.modelStreamIndex].Content += chunk
 	}
-	p.markDirty()
+	p.markTailDirty()
 }
 
 func (p *Page) FinishStream() {
@@ -209,6 +199,7 @@ func (p *Page) FinishStream() {
 	if p.modelStreamIndex >= 0 && p.modelStreamIndex < len(p.modelMessages) {
 		p.modelMessages[p.modelStreamIndex].Content = strings.TrimSpace(p.modelMessages[p.modelStreamIndex].Content)
 	}
+	p.freezeAssistantMessage(p.streamIndex)
 	p.streamIndex = -1
 	p.thinkingIndex = -1
 	p.modelStreamIndex = -1
@@ -309,6 +300,23 @@ func (p *Page) AppendToolResult(toolCallID, toolName, result string) {
 	p.markDirty()
 }
 
+func (p *Page) ApplyAssistantBlocks(blocks []domain.AssistantContentBlock) {
+	if len(blocks) == 0 {
+		return
+	}
+	if p.modelStreamIndex >= 0 && p.modelStreamIndex < len(p.modelMessages) {
+		p.modelMessages[p.modelStreamIndex].AssistantBlocks = cloneAssistantBlocks(blocks)
+		return
+	}
+	for i := len(p.modelMessages) - 1; i >= 0; i-- {
+		if p.modelMessages[i].Role != "assistant" || p.modelMessages[i].Type != domain.MessageTypeText {
+			continue
+		}
+		p.modelMessages[i].AssistantBlocks = cloneAssistantBlocks(blocks)
+		return
+	}
+}
+
 func (p *Page) ApplyCompact(boundary, summary domain.Message, restoredFiles, preservedTail []domain.Message) {
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, boundary.Content))
 	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, "Compaction summary saved to model context."))
@@ -356,6 +364,11 @@ func (p *Page) renderMessage(width int, index int, message chatui.Message) strin
 
 func (p *Page) markDirty() {
 	p.dirty = true
+	p.cachedPrefix.dirty = true
+}
+
+func (p *Page) markTailDirty() {
+	p.dirty = true
 }
 
 func (p *Page) ToggleToolCardAtLine(line int) bool {
@@ -388,4 +401,103 @@ func (p *Page) ToolNameAtLine(line int) string {
 
 func (p *Page) ToolActionAtLine(line int) ToolAction {
 	return ToolActionNone
+}
+
+func (p *Page) activeTailStart() (int, bool) {
+	start := len(p.messages)
+	if p.thinkingIndex >= 0 && p.thinkingIndex < start {
+		start = p.thinkingIndex
+	}
+	if p.streamIndex >= 0 && p.streamIndex < start {
+		start = p.streamIndex
+	}
+	if start >= len(p.messages) {
+		return 0, false
+	}
+	return start, true
+}
+
+func (p *Page) renderAll(width int) {
+	content, _, hits := p.renderRange(width, 0, len(p.messages), 0)
+	p.cachedContent = content
+	p.toolHits = hits
+	p.cachedPrefix = renderCache{
+		tailStart: -1,
+		dirty:     true,
+	}
+}
+
+func (p *Page) renderWithActiveTail(width, tailStart int) {
+	if p.cachedPrefix.width != width || p.cachedPrefix.tailStart != tailStart || p.cachedPrefix.dirty {
+		content, lineCount, hits := p.renderRange(width, 0, tailStart, 0)
+		p.cachedPrefix.width = width
+		p.cachedPrefix.tailStart = tailStart
+		p.cachedPrefix.content = content
+		p.cachedPrefix.lineCount = lineCount
+		p.cachedPrefix.toolHits = hits
+		p.cachedPrefix.dirty = false
+	}
+
+	tailContent, _, tailHits := p.renderRange(width, tailStart, len(p.messages), p.cachedPrefix.lineCount)
+	switch {
+	case p.cachedPrefix.content == "":
+		p.cachedContent = tailContent
+	case tailContent == "":
+		p.cachedContent = p.cachedPrefix.content
+	default:
+		p.cachedContent = p.cachedPrefix.content + "\n\n" + tailContent
+	}
+
+	p.toolHits = append(make([]toolHit, 0, len(p.cachedPrefix.toolHits)+len(tailHits)), p.cachedPrefix.toolHits...)
+	p.toolHits = append(p.toolHits, tailHits...)
+}
+
+func (p *Page) renderRange(width, start, end, initialLineOffset int) (string, int, []toolHit) {
+	if start < 0 {
+		start = 0
+	}
+	if end > len(p.messages) {
+		end = len(p.messages)
+	}
+	if start >= end {
+		return "", initialLineOffset, nil
+	}
+
+	lines := make([]string, 0, end-start)
+	hits := make([]toolHit, 0)
+	lineOffset := initialLineOffset
+	hasPrior := start > 0
+
+	for i := start; i < end; i++ {
+		message := p.messages[i]
+		if i > 0 && needsReplyDivider(p.messages[i-1], message) {
+			divider := renderReplyDivider(width)
+			if len(lines) > 0 || hasPrior {
+				lineOffset++
+			}
+			lines = append(lines, divider)
+			lineOffset += lipgloss.Height(divider)
+			hasPrior = true
+		}
+
+		rendered := p.renderMessage(width, i, message)
+		if len(lines) > 0 || hasPrior {
+			lineOffset++
+		}
+		startLine := lineOffset
+		lines = append(lines, rendered)
+		lineOffset += lipgloss.Height(rendered)
+		hasPrior = true
+
+		if message.Type == chatui.TypeTool {
+			hits = append(hits, toolHit{
+				messageIndex: i,
+				toolName:     message.ToolName,
+				startLine:    startLine,
+				endLine:      lineOffset - 1,
+			})
+		}
+	}
+
+	return strings.Join(lines, "\n\n"), lineOffset, hits
 }

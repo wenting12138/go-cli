@@ -14,11 +14,25 @@ type Message struct {
 	Content            string
 	Reasoning          string
 	ReasoningSignature string
+	AssistantBlocks    []AssistantContentBlock
 	Type               string
 	ToolName           string
 	ToolCallID         string
 	Args               map[string]any
 	Result             string
+}
+
+type AssistantContentBlock struct {
+	Type      string         `json:"type"`
+	Text      string         `json:"text,omitempty"`
+	Thinking  string         `json:"thinking,omitempty"`
+	Signature string         `json:"signature,omitempty"`
+	ID        string         `json:"id,omitempty"`
+	Name      string         `json:"name,omitempty"`
+	Input     map[string]any `json:"input,omitempty"`
+	ToolUseID string         `json:"tool_use_id,omitempty"`
+	Content   string         `json:"content,omitempty"`
+	Data      string         `json:"data,omitempty"`
 }
 
 type Session struct {

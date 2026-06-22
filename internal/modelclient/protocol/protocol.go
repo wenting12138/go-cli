@@ -10,6 +10,8 @@ const (
 	EventTypeThinkingSignature EventType = "thinking_signature"
 	EventTypeRedactedThinking  EventType = "redacted_thinking"
 	EventTypeToolCall          EventType = "tool_call"
+	EventTypeAssistantBlocks   EventType = "assistant_blocks"
+	EventTypeMetrics           EventType = "metrics"
 )
 
 type ToolDefinition struct {
@@ -24,10 +26,22 @@ type ToolCall struct {
 	Arguments map[string]any
 }
 
+type ResponseMetrics struct {
+	FirstTokenDuration int64
+	TotalDuration      int64
+	LoadDuration       int64
+	PromptEvalCount    int
+	PromptEvalDuration int64
+	EvalCount          int
+	EvalDuration       int64
+}
+
 type Event struct {
-	Type     EventType
-	Text     string
-	ToolCall ToolCall
+	Type            EventType
+	Text            string
+	ToolCall        ToolCall
+	AssistantBlocks []domain.AssistantContentBlock
+	Metrics         ResponseMetrics
 }
 
 type ChatRequest struct {

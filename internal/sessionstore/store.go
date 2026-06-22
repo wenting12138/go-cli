@@ -186,10 +186,28 @@ func cloneMessages(messages []domain.Message) []domain.Message {
 	out := make([]domain.Message, 0, len(messages))
 	for _, message := range messages {
 		cloned := message
+		if len(message.AssistantBlocks) > 0 {
+			cloned.AssistantBlocks = cloneAssistantBlocks(message.AssistantBlocks)
+		}
 		if len(message.Args) > 0 {
 			cloned.Args = make(map[string]any, len(message.Args))
 			for key, value := range message.Args {
 				cloned.Args[key] = value
+			}
+		}
+		out = append(out, cloned)
+	}
+	return out
+}
+
+func cloneAssistantBlocks(blocks []domain.AssistantContentBlock) []domain.AssistantContentBlock {
+	out := make([]domain.AssistantContentBlock, 0, len(blocks))
+	for _, block := range blocks {
+		cloned := block
+		if len(block.Input) > 0 {
+			cloned.Input = make(map[string]any, len(block.Input))
+			for key, value := range block.Input {
+				cloned.Input[key] = value
 			}
 		}
 		out = append(out, cloned)

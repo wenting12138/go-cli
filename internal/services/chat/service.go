@@ -14,6 +14,7 @@ import (
 	"go-cli/internal/eventbus"
 	"go-cli/internal/events"
 	"go-cli/internal/modelclient"
+	"go-cli/internal/modelclient/protocol"
 	"go-cli/internal/modules/chat/domain"
 	"go-cli/internal/prompt"
 )
@@ -23,6 +24,13 @@ type Service struct {
 	promptBuilder *prompt.Builder
 	mu            sync.Mutex
 	active        map[string]context.CancelFunc
+}
+
+type StreamMetrics struct {
+	StartedAt       time.Time
+	FirstOutputAt   time.Time
+	CompletedAt     time.Time
+	ProviderMetrics protocol.ResponseMetrics
 }
 
 func New(bus *eventbus.Bus) *Service {
@@ -53,9 +61,24 @@ func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, mes
 		defer s.clearCancel(requestID)
 		defer cancel()
 		toolArgsByID := make(map[string]map[string]any)
+		metrics := StreamMetrics{
+			StartedAt: time.Now(),
+		}
+		markFirstOutput := func() {
+			if metrics.FirstOutputAt.IsZero() {
+				metrics.FirstOutputAt = time.Now()
+			}
+		}
 
 		err := agent.Run(ctx, messages, react.Hooks{
+			OnAssistantBlocks: func(blocks []domain.AssistantContentBlock) {
+				s.bus.Publish(events.ChatAssistantBlocks{
+					RequestID: requestID,
+					Blocks:    cloneAssistantBlocks(blocks),
+				})
+			},
 			OnToolStart: func(name, toolCallID string, args map[string]any) {
+				markFirstOutput()
 				toolArgsByID[toolCallID] = cloneArgs(args)
 				s.bus.Publish(events.ChatToolCallStarted{
 					RequestID:  requestID,
@@ -74,6 +97,7 @@ func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, mes
 				})
 			},
 			OnThinkingStart: func() {
+				markFirstOutput()
 				s.bus.Publish(events.ChatThinkingStarted{RequestID: requestID})
 			},
 			OnThinkingChunk: func(chunk string) {
@@ -89,6 +113,7 @@ func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, mes
 				})
 			},
 			OnFinalStart: func() {
+				markFirstOutput()
 				s.bus.Publish(events.ChatResponseStarted{RequestID: requestID})
 			},
 			OnFinalChunk: func(chunk string) {
@@ -96,6 +121,9 @@ func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, mes
 					RequestID: requestID,
 					Chunk:     chunk,
 				})
+			},
+			OnMetrics: func(providerMetrics protocol.ResponseMetrics) {
+				metrics.ProviderMetrics = providerMetrics
 			},
 		})
 		if err != nil {
@@ -113,10 +141,25 @@ func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, mes
 			return
 		}
 
-		s.bus.Publish(events.ChatStreamCompleted{RequestID: requestID})
+		metrics.CompletedAt = time.Now()
+		s.bus.Publish(events.ChatStreamCompleted{
+			RequestID: requestID,
+			Metrics:   s.buildResponseMetrics(metrics),
+		})
 	}()
 
 	return nil
+}
+
+func (s *Service) buildResponseMetrics(metrics StreamMetrics) protocol.ResponseMetrics {
+	out := metrics.ProviderMetrics
+	if !metrics.FirstOutputAt.IsZero() && !metrics.StartedAt.IsZero() {
+		out.FirstTokenDuration = metrics.FirstOutputAt.Sub(metrics.StartedAt).Nanoseconds()
+	}
+	if !metrics.CompletedAt.IsZero() && !metrics.StartedAt.IsZero() && out.TotalDuration <= 0 {
+		out.TotalDuration = metrics.CompletedAt.Sub(metrics.StartedAt).Nanoseconds()
+	}
+	return out
 }
 
 func (s *Service) Cancel(requestID string) bool {
@@ -152,6 +195,21 @@ func cloneArgs(args map[string]any) map[string]any {
 		cloned[key] = value
 	}
 	return cloned
+}
+
+func cloneAssistantBlocks(blocks []domain.AssistantContentBlock) []domain.AssistantContentBlock {
+	out := make([]domain.AssistantContentBlock, 0, len(blocks))
+	for _, block := range blocks {
+		cloned := block
+		if len(block.Input) > 0 {
+			cloned.Input = make(map[string]any, len(block.Input))
+			for key, value := range block.Input {
+				cloned.Input[key] = value
+			}
+		}
+		out = append(out, cloned)
+	}
+	return out
 }
 
 func (s *Service) storeCancel(requestID string, cancel context.CancelFunc) {

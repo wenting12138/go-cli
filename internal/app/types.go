@@ -10,6 +10,7 @@ import (
 	"go-cli/internal/agentmode"
 	"go-cli/internal/config"
 	"go-cli/internal/eventbus"
+	"go-cli/internal/modelclient/protocol"
 	"go-cli/internal/modules/shared"
 	chatservice "go-cli/internal/services/chat"
 	"go-cli/internal/sessionstore"
@@ -117,6 +118,8 @@ type Model struct {
 	store                *sessionstore.Store
 	mode                 agentmode.Mode
 	typingIndicatorFrame int
+	streamFlushPending   bool
+	lastMetrics          protocol.ResponseMetrics
 }
 
 type eventMsg struct {
@@ -124,6 +127,7 @@ type eventMsg struct {
 }
 
 type animationTickMsg struct{}
+type streamFlushTickMsg struct{}
 
 type slashCommand struct {
 	command     string
