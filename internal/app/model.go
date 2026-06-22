@@ -71,7 +71,7 @@ func Run() error {
 		return err
 	}
 
-	program := tea.NewProgram(NewModel(cfg), tea.WithMouseCellMotion())
+	program := tea.NewProgram(NewModel(cfg))
 	_, err = program.Run()
 	return err
 }

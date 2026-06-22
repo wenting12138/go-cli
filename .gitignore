@@ -44,3 +44,5 @@ build/
 /AGENTS.md
 
 /go-cli.exe
+
+/go.sum
