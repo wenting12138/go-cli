@@ -44,6 +44,7 @@ type Page struct {
 	cachedPrefix     renderCache
 	frozenRendered   []string
 	frozenWidth      int
+	toolRenderCache  map[int]toolRenderCache
 	toolHits         []toolHit
 	dirty            bool
 }
@@ -64,6 +65,12 @@ type toolHit struct {
 	endLine      int
 }
 
+type toolRenderCache struct {
+	width    int
+	key      string
+	rendered string
+}
+
 type ToolAction string
 
 const (
@@ -81,6 +88,7 @@ func NewPage(model config.ModelConfig) *Page {
 			tailStart: -1,
 			dirty:     true,
 		},
+		toolRenderCache: map[int]toolRenderCache{},
 		messages: []chatui.Message{
 			chatui.TextMessage(chatui.TypeSystem, startupLogo()),
 		},
@@ -350,7 +358,7 @@ func (p *Page) renderMessage(width int, index int, message chatui.Message) strin
 		}
 	}
 	if message.Type == chatui.TypeTool {
-		content = toolBodyStyle.Width(max(1, contentWidth-toolBodyStyle.GetHorizontalFrameSize())).Render(renderToolCard(contentWidth, message))
+		content = toolBodyStyle.Width(max(1, contentWidth-toolBodyStyle.GetHorizontalFrameSize())).Render(p.renderToolCardCached(contentWidth, index, message))
 	}
 	if message.Type == chatui.TypeUser {
 		content = userStyle.Width(max(1, contentWidth-userStyle.GetHorizontalFrameSize())).Render(message.Content)
@@ -500,4 +508,34 @@ func (p *Page) renderRange(width, start, end, initialLineOffset int) (string, in
 	}
 
 	return strings.Join(lines, "\n\n"), lineOffset, hits
+}
+
+func (p *Page) renderToolCardCached(width, index int, message chatui.Message) string {
+	cacheKey := toolRenderCacheKey(message)
+	if cached, ok := p.toolRenderCache[index]; ok && cached.width == width && cached.key == cacheKey {
+		return cached.rendered
+	}
+
+	rendered := renderToolCard(width, message)
+	p.toolRenderCache[index] = toolRenderCache{
+		width:    width,
+		key:      cacheKey,
+		rendered: rendered,
+	}
+	return rendered
+}
+
+func toolRenderCacheKey(message chatui.Message) string {
+	oldLines := ""
+	if message.Meta != nil {
+		oldLines, _ = message.Meta["old_lines"].(string)
+	}
+	return fmt.Sprintf(
+		"%s|%s|%s|%t|%s",
+		message.ToolCallID,
+		message.ToolName,
+		message.Content,
+		isToolExpanded(message),
+		oldLines,
+	)
 }

@@ -47,14 +47,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if shouldSync {
 			m.syncViewport()
 		}
-		return m, tea.Batch(waitEventCmd(m.events), m.animationCmd(), m.streamFlushCmd())
-	case animationTickMsg:
-		if m.hasTypingIndicator() {
-			m.typingIndicatorFrame = (m.typingIndicatorFrame + 1) % 3
-			m.syncViewport()
-			return m, m.animationCmd()
-		}
-		return m, nil
+		return m, tea.Batch(waitEventCmd(m.events), m.streamFlushCmd())
 	case streamFlushTickMsg:
 		if !m.streamFlushPending {
 			return m, nil
@@ -74,7 +67,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
-	case key.Matches(msg, m.keys.Quit):
+	case msg.String() == "ctrl+c":
+		return m, tea.Quit
+	case key.Matches(msg, m.keys.Quit) && m.focus != focusInput:
 		return m, tea.Quit
 	case key.Matches(msg, m.keys.Focus):
 		m.toggleFocus()
@@ -378,7 +373,6 @@ func (m *Model) handleClearCommand() (tea.Model, tea.Cmd) {
 	}
 	m.pages[pageChat] = chat.NewPage(activeModel)
 	m.mode = agentmode.Chat
-	m.typingIndicatorFrame = 0
 	if m.current == pageChat {
 		m.input.Placeholder = m.currentPage().Placeholder()
 	}
@@ -445,7 +439,6 @@ func (m *Model) handleResumeByID(id string) (tea.Model, tea.Cmd) {
 	chatPage.RestoreSession(session.ID, session.Title, session.UIMessages, session.ModelMessages)
 	chatPage.SetSystemPrompt(session.SystemPrompt)
 	m.mode = agentmode.Chat
-	m.typingIndicatorFrame = 0
 	if activeModel, activeErr := m.config.ActiveModel(); activeErr == nil {
 		if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok {
 			*toolsPage = *toolspage.NewPage(agenttools.Specs(activeModel, m.mode))
@@ -467,7 +460,6 @@ func (m *Model) handleEvent(event any) bool {
 	switch e := event.(type) {
 	case events.ChatStreamStarted:
 		chatPage.BeginRequest(e.RequestID)
-		m.typingIndicatorFrame = 0
 		m.streamFlushPending = false
 		return true
 	case events.ChatAssistantBlocks:
@@ -516,7 +508,6 @@ func (m *Model) handleEvent(event any) bool {
 	case events.ChatStreamFailed:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FailStream(e.Err)
-			m.typingIndicatorFrame = 0
 			m.streamFlushPending = false
 			m.persistActiveChat()
 		}
@@ -524,7 +515,6 @@ func (m *Model) handleEvent(event any) bool {
 	case events.ChatStreamCompleted:
 		if chatPage.HasActiveRequest(e.RequestID) {
 			chatPage.FinishStream()
-			m.typingIndicatorFrame = 0
 			m.streamFlushPending = false
 			m.lastMetrics = e.Metrics
 			m.persistActiveChat()
@@ -584,21 +574,6 @@ func (m *Model) interruptActiveStream() bool {
 		return false
 	}
 	return m.chatSvc.Cancel(requestID)
-}
-
-func (m Model) hasTypingIndicator() bool {
-	if m.current != pageChat {
-		return false
-	}
-	chatPage, ok := m.pages[pageChat].(*chat.Page)
-	return ok && chatPage.HasPendingStream()
-}
-
-func (m Model) animationCmd() tea.Cmd {
-	if !m.hasTypingIndicator() {
-		return nil
-	}
-	return animationTickCmd()
 }
 
 func (m Model) streamFlushCmd() tea.Cmd {

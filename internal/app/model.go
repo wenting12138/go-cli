@@ -179,12 +179,6 @@ func waitEventCmd(events <-chan any) tea.Cmd {
 	}
 }
 
-func animationTickCmd() tea.Cmd {
-	return tea.Tick(180*time.Millisecond, func(time.Time) tea.Msg {
-		return animationTickMsg{}
-	})
-}
-
 func streamFlushTickCmd() tea.Cmd {
 	return tea.Tick(33*time.Millisecond, func(time.Time) tea.Msg {
 		return streamFlushTickMsg{}

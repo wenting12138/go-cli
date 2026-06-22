@@ -91,10 +91,6 @@ var (
 				BorderForeground(lipgloss.Color("238")).
 				Foreground(lipgloss.Color("242")).
 				Padding(0, 1)
-	typingIndicatorStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("239"))
-	typingIndicatorActiveStyle = lipgloss.NewStyle().
-					Foreground(lipgloss.Color("252"))
 )
 
 type Model struct {
@@ -117,7 +113,6 @@ type Model struct {
 	focus                focusMode
 	store                *sessionstore.Store
 	mode                 agentmode.Mode
-	typingIndicatorFrame int
 	streamFlushPending   bool
 	lastMetrics          protocol.ResponseMetrics
 }
@@ -126,7 +121,6 @@ type eventMsg struct {
 	event any
 }
 
-type animationTickMsg struct{}
 type streamFlushTickMsg struct{}
 
 type slashCommand struct {

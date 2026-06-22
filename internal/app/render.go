@@ -93,27 +93,7 @@ func (m Model) renderBottomPanel() string {
 		style = inactiveBoxStyle
 	}
 	inputBox := style.Width(max(1, width-style.GetHorizontalFrameSize())).Render(m.input.View())
-	if m.current != pageChat || !m.hasTypingIndicator() {
-		return inputBox
-	}
-	return lipgloss.JoinVertical(lipgloss.Left, inputBox, m.renderTypingIndicator())
-}
-
-func (m Model) renderTypingIndicator() string {
-	dots := []string{"●", "●", "●"}
-	parts := make([]string, 0, len(dots))
-	active := m.typingIndicatorFrame % len(dots)
-	for i, dot := range dots {
-		style := typingIndicatorStyle
-		if i == active {
-			style = typingIndicatorActiveStyle
-		}
-		parts = append(parts, style.Render(dot))
-	}
-	return lipgloss.NewStyle().
-		Width(m.contentWidth()).
-		PaddingLeft(2).
-		Render(strings.Join(parts, "  "))
+	return inputBox
 }
 
 func (m Model) renderSlashMenu() string {
