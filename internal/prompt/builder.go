@@ -12,15 +12,18 @@ import (
 	"go-cli/internal/agentmode"
 	"go-cli/internal/config"
 	"go-cli/internal/modelclient/protocol"
+	skillstore "go-cli/internal/skills"
 )
 
 const DynamicBoundary = "__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__"
 
 type Input struct {
-	Model      config.ModelConfig
-	Mode       agentmode.Mode
-	WorkingDir string
-	Tools      []protocol.ToolDefinition
+	Model       config.ModelConfig
+	Mode        agentmode.Mode
+	WorkingDir  string
+	Tools       []protocol.ToolDefinition
+	Skills      []skillstore.Skill
+	ActiveSkill *skillstore.Skill
 }
 
 type Section struct {
@@ -142,6 +145,16 @@ func defaultSections() []Section {
 			Compute: func(input Input) (string, error) { return toolsSection(input.Tools), nil },
 		},
 		{
+			Name:    "skills",
+			Dynamic: true,
+			Compute: func(input Input) (string, error) { return skillsSection(input.Skills), nil },
+		},
+		{
+			Name:    "active_skill",
+			Dynamic: true,
+			Compute: func(input Input) (string, error) { return activeSkillSection(input.ActiveSkill), nil },
+		},
+		{
 			Name:    "environment",
 			Dynamic: true,
 			Compute: func(input Input) (string, error) { return environmentSection(input), nil },
@@ -235,6 +248,48 @@ func toolsSection(definitions []protocol.ToolDefinition) string {
 		}
 		lines = append(lines, line)
 	}
+	return strings.Join(lines, "\n")
+}
+
+func skillsSection(skills []skillstore.Skill) string {
+	if len(skills) == 0 {
+		return ""
+	}
+
+	lines := []string{
+		"# Skills",
+		"Optional skills are available in the workspace. The user can load one into the session with /skills <name>.",
+		"Do not assume a skill is loaded unless it appears in the conversation history.",
+	}
+	for _, skill := range skills {
+		line := "- " + skill.Name
+		if strings.TrimSpace(skill.Description) != "" {
+			line += ": " + skill.Description
+		}
+		if strings.TrimSpace(skill.WhenToUse) != "" {
+			line += " | when: " + skill.WhenToUse
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func activeSkillSection(skill *skillstore.Skill) string {
+	if skill == nil {
+		return ""
+	}
+
+	lines := []string{
+		"# Active Skill",
+		fmt.Sprintf("- Name: %s", skill.Name),
+		fmt.Sprintf("- Scope: %s", skill.Scope),
+		fmt.Sprintf("- Context: %s", skill.Context),
+	}
+	if len(skill.AllowedTools) > 0 {
+		lines = append(lines, fmt.Sprintf("- Allowed tools: %s", strings.Join(skill.AllowedTools, ", ")))
+	}
+	lines = append(lines, "")
+	lines = append(lines, strings.TrimSpace(skill.Content))
 	return strings.Join(lines, "\n")
 }
 

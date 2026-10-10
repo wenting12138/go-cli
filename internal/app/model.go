@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"time"
 
 	"github.com/charmbracelet/bubbles/cursor"
@@ -19,9 +20,11 @@ import (
 	"go-cli/internal/modules/models"
 	"go-cli/internal/modules/resume"
 	"go-cli/internal/modules/shared"
+	skillspage "go-cli/internal/modules/skills"
 	toolspage "go-cli/internal/modules/tools"
 	chatservice "go-cli/internal/services/chat"
 	"go-cli/internal/sessionstore"
+	skillstore "go-cli/internal/skills"
 )
 
 func NewModel(cfg config.State) Model {
@@ -34,6 +37,8 @@ func NewModel(cfg config.State) Model {
 
 	activeModel, _ := cfg.ActiveModel()
 	store, _ := sessionstore.New()
+	workingDir, _ := os.Getwd()
+	availableSkills, _ := skillstore.Load(workingDir)
 	summaries := []sessionstore.Summary{}
 	if store != nil {
 		summaries, _ = store.List()
@@ -44,10 +49,11 @@ func NewModel(cfg config.State) Model {
 		pageModels: models.NewPage(cfg.Config.Models, cfg.Config.CurrentModel),
 		pageResume: resume.NewPage(summaries),
 		pageTools:  toolspage.NewPage(agenttools.Specs(activeModel, agentmode.Chat)),
+		pageSkills: skillspage.NewPage(availableSkills),
 	}
 	events, _ := bus.Subscribe(128)
 
-	return Model{
+	model := Model{
 		viewport: viewport.New(0, 0),
 		input:    input,
 		help:     help.New(),
@@ -62,7 +68,12 @@ func NewModel(cfg config.State) Model {
 		focus:    focusInput,
 		store:    store,
 		mode:     agentmode.Chat,
+		skills:   availableSkills,
 	}
+	if skillsPage, ok := model.pages[pageSkills].(*skillspage.Page); ok {
+		model.syncSkillsPageState(skillsPage)
+	}
+	return model
 }
 
 func Run() error {
@@ -144,6 +155,9 @@ func (m *Model) updateLayout() {
 	}
 	if resumePage, ok := m.pages[pageResume].(*resume.Page); ok {
 		resumePage.SetSize(contentWidth, viewportHeight)
+	}
+	if skillsPage, ok := m.pages[pageSkills].(*skillspage.Page); ok {
+		skillsPage.SetSize(contentWidth, viewportHeight)
 	}
 }
 

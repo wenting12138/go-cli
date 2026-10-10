@@ -12,6 +12,7 @@ import (
 	"go-cli/internal/modules/chat/domain"
 	chatui "go-cli/internal/modules/chat/ui"
 	"go-cli/internal/modules/shared"
+	skillstore "go-cli/internal/skills"
 )
 
 const PageName = "chat"
@@ -35,6 +36,8 @@ type Page struct {
 	modelMessages    []domain.Message
 	model            config.ModelConfig
 	sessionID        string
+	activeSkill      *skillstore.Skill
+	pendingForkSkill *skillstore.Skill
 	streamIndex      int
 	thinkingIndex    int
 	modelStreamIndex int
@@ -167,6 +170,12 @@ func (p *Page) RestoreSession(sessionID, title string, uiMessages []chatui.Messa
 	p.markDirty()
 }
 
+func (p *Page) RestoreSessionState(sessionID, title string, uiMessages []chatui.Message, modelMessages []domain.Message, activeSkill, pendingForkSkill *skillstore.Skill) {
+	p.RestoreSession(sessionID, title, uiMessages, modelMessages)
+	p.activeSkill = cloneSkill(activeSkill)
+	p.pendingForkSkill = cloneSkill(pendingForkSkill)
+}
+
 func (p *Page) SetSystemPrompt(systemPrompt string) {
 	p.systemPrompt = strings.TrimSpace(systemPrompt)
 }
@@ -183,6 +192,69 @@ func (p *Page) SetModel(model config.ModelConfig) {
 
 func (p *Page) RefreshModel(model config.ModelConfig) {
 	p.model = model
+}
+
+func (p *Page) ApplySkill(name, scope, content string) {
+	p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, fmt.Sprintf("Loaded skill %s from %s.", name, scope)))
+	p.markDirty()
+}
+
+func (p *Page) ActivateSkill(skill skillstore.Skill) {
+	cloned := skill
+	if skill.Context == "fork" {
+		p.pendingForkSkill = &cloned
+		p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, fmt.Sprintf("Loaded fork skill %s from %s for the next turn.", skill.Name, skill.Scope)))
+	} else {
+		p.activeSkill = &cloned
+		p.pendingForkSkill = nil
+		p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, fmt.Sprintf("Activated skill %s from %s.", skill.Name, skill.Scope)))
+	}
+	p.markDirty()
+}
+
+func (p *Page) ClearSkills() bool {
+	clearedActive := p.activeSkill != nil
+	clearedPending := p.pendingForkSkill != nil
+	if !clearedActive && !clearedPending {
+		return false
+	}
+
+	p.activeSkill = nil
+	p.pendingForkSkill = nil
+
+	switch {
+	case clearedActive && clearedPending:
+		p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, "Cleared active skill and pending fork skill."))
+	case clearedActive:
+		p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, "Cleared active skill."))
+	case clearedPending:
+		p.messages = append(p.messages, chatui.TextMessage(chatui.TypeSystem, "Cleared pending fork skill."))
+	}
+	p.markDirty()
+	return true
+}
+
+func (p *Page) ActiveSkill() *skillstore.Skill {
+	return cloneSkill(p.activeSkill)
+}
+
+func (p *Page) PendingForkSkill() *skillstore.Skill {
+	return cloneSkill(p.pendingForkSkill)
+}
+
+func (p *Page) TurnSkill() *skillstore.Skill {
+	if p.pendingForkSkill != nil {
+		return cloneSkill(p.pendingForkSkill)
+	}
+	return cloneSkill(p.activeSkill)
+}
+
+func (p *Page) ConsumePendingForkSkill() {
+	if p.pendingForkSkill == nil {
+		return
+	}
+	p.pendingForkSkill = nil
+	p.markDirty()
 }
 
 func (p *Page) AppendStream(chunk string) {

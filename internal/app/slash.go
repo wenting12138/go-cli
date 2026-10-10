@@ -8,6 +8,8 @@ func newSlashMenu() slashMenu {
 		{command: "/models", description: "open model selector"},
 		{command: "/resume", description: "open session resume page"},
 		{command: "/tools", description: "inspect tool definitions"},
+		{command: "/skills", description: "open skill selector"},
+		{command: "/skill-clear", description: "clear active and pending skills"},
 		{command: "/compact", description: "compact model conversation"},
 		{command: "/clear", description: "clear current chat"},
 	}
@@ -43,11 +45,28 @@ func (m Model) currentSlashItems() []slashCommand {
 	}
 
 	query := strings.ToLower(value)
-	filtered := make([]slashCommand, 0, len(m.slash.commands))
+	filtered := make([]slashCommand, 0, len(m.slash.commands)+len(m.skills))
 	for _, cmd := range m.slash.commands {
 		if strings.HasPrefix(strings.ToLower(cmd.command), query) {
 			filtered = append(filtered, cmd)
 		}
+	}
+	for _, skill := range m.skills {
+		if !skill.UserInvocable {
+			continue
+		}
+		command := "/" + skill.Name
+		if !strings.HasPrefix(strings.ToLower(command), query) {
+			continue
+		}
+		description := "load skill"
+		if strings.TrimSpace(skill.Description) != "" {
+			description = skill.Description
+		}
+		filtered = append(filtered, slashCommand{
+			command:     command,
+			description: description,
+		})
 	}
 	return filtered
 }

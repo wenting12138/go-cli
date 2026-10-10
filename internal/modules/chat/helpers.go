@@ -8,6 +8,7 @@ import (
 
 	"go-cli/internal/modules/chat/domain"
 	chatui "go-cli/internal/modules/chat/ui"
+	skillstore "go-cli/internal/skills"
 )
 
 func max(a, b int) int {
@@ -68,6 +69,17 @@ func cloneAssistantBlocks(blocks []domain.AssistantContentBlock) []domain.Assist
 		out = append(out, cloned)
 	}
 	return out
+}
+
+func cloneSkill(skill *skillstore.Skill) *skillstore.Skill {
+	if skill == nil {
+		return nil
+	}
+	cloned := *skill
+	if len(skill.AllowedTools) > 0 {
+		cloned.AllowedTools = append([]string(nil), skill.AllowedTools...)
+	}
+	return &cloned
 }
 
 func toUIMessages(messages []domain.Message) []chatui.Message {

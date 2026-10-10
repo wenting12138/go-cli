@@ -2,14 +2,17 @@ package app
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 
+	"go-cli/internal/agent/react"
 	agenttools "go-cli/internal/agent/tools"
 	"go-cli/internal/agentmode"
+	"go-cli/internal/config"
 	"go-cli/internal/events"
 	"go-cli/internal/modelclient/protocol"
 	"go-cli/internal/modules/chat"
@@ -17,8 +20,10 @@ import (
 	"go-cli/internal/modules/models"
 	"go-cli/internal/modules/resume"
 	"go-cli/internal/modules/shared"
+	skillspage "go-cli/internal/modules/skills"
 	toolspage "go-cli/internal/modules/tools"
 	"go-cli/internal/sessionstore"
+	skillstore "go-cli/internal/skills"
 )
 
 const autoCompactThresholdRatio = 0.70
@@ -84,6 +89,8 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleModelsKey(msg)
 	case m.current == pageResume:
 		return m.handleResumeKey(msg)
+	case m.current == pageSkills:
+		return m.handleSkillsKey(msg)
 	case m.shouldShowSlashMenu():
 		if handledModel, handledCmd, ok := m.handleSlashMenuKey(msg); ok {
 			return handledModel, handledCmd
@@ -201,6 +208,22 @@ func (m Model) handleResumeKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m Model) handleSkillsKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	skillsPage, ok := m.pages[pageSkills].(*skillspage.Page)
+	if !ok {
+		return m, nil
+	}
+	if msg.String() == "r" {
+		return m.refreshSkillsPage()
+	}
+	if key.Matches(msg, m.keys.Send) {
+		return m.handleSkillByName(skillsPage.SelectedSkillName())
+	}
+	cmd := skillsPage.Update(msg)
+	m.syncViewport()
+	return m, cmd
+}
+
 func (m Model) handleSlashMenuKey(msg tea.KeyMsg) (tea.Model, tea.Cmd, bool) {
 	total := len(m.currentSlashItems())
 	switch msg.String() {
@@ -268,7 +291,21 @@ func (m Model) handleChatInput(text string) (tea.Model, tea.Cmd) {
 		m.syncViewport()
 		return m, nil
 	}
-	systemPrompt, err := m.chatSvc.BuildSystemPrompt(activeModel, m.mode)
+	turnSkill := chatPage.TurnSkill()
+	if turnSkill == nil {
+		if discovered, ok := skillstore.Discover(m.skills, text); ok {
+			chatPage.ActivateSkill(discovered)
+			chatPage.SystemMessage(fmt.Sprintf("Auto discovered skill %s.", discovered.Name))
+			if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok {
+				*toolsPage = *toolspage.NewPage(m.currentToolSpecs(activeModel))
+			}
+			if skillsPage, ok := m.pages[pageSkills].(*skillspage.Page); ok {
+				m.syncSkillsPageState(skillsPage)
+			}
+			turnSkill = chatPage.TurnSkill()
+		}
+	}
+	systemPrompt, err := m.chatSvc.BuildSystemPromptForSkill(activeModel, m.mode, turnSkill)
 	if err == nil {
 		chatPage.SetSystemPrompt(systemPrompt)
 	}
@@ -282,11 +319,13 @@ func (m Model) handleChatInput(text string) (tea.Model, tea.Cmd) {
 		}
 	}
 	m.persistActiveChat()
-	if err := m.chatSvc.StartStream(activeModel, m.mode, chatPage.SnapshotMessages()); err != nil {
+	if err := m.chatSvc.StartStreamWithSkill(activeModel, m.mode, chatPage.SnapshotMessages(), turnSkill); err != nil {
 		chatPage.FailStream(fmt.Sprintf("model request failed: %s", err))
 		m.syncViewport()
 		return m, nil
 	}
+	chatPage.ConsumePendingForkSkill()
+	m.persistActiveChat()
 	m.syncViewport()
 	return m, nil
 }
@@ -332,17 +371,63 @@ func (m *Model) handleSlashCommand(text string) (tea.Model, tea.Cmd) {
 		m.input.Placeholder = m.currentPage().Placeholder()
 		m.syncViewport()
 		return m, nil
+	case "skills":
+		if len(parts) == 1 {
+			m.current = pageSkills
+			m.input.Placeholder = m.currentPage().Placeholder()
+			m.syncViewport()
+			return m, nil
+		}
+		if len(parts) == 2 && parts[1] == "clear" {
+			return m.handleClearSkillCommand()
+		}
+		return m.handleSkillByName(parts[1])
+	case "skill-clear":
+		return m.handleClearSkillCommand()
 	case "compact":
 		return m.handleCompactCommand()
 	case "clear":
 		return m.handleClearCommand()
 	default:
+		if model, cmd, ok := m.tryHandleSkillAlias(parts[0]); ok {
+			return model, cmd
+		}
 		if page := m.currentPage(); page != nil {
-			page.SystemMessage(fmt.Sprintf("Unknown command: /%s\nAvailable commands: /chat /models /models <id> /resume /resume <id> /tools /compact /clear", parts[0]))
+			page.SystemMessage(fmt.Sprintf("Unknown command: /%s\nAvailable commands: /chat /models /models <id> /resume /resume <id> /tools /skills /skills <name> /skills clear /skill-clear /compact /clear /<skill-name>", parts[0]))
 		}
 		m.syncViewport()
 		return m, nil
 	}
+}
+
+func (m *Model) handleClearSkillCommand() (tea.Model, tea.Cmd) {
+	chatPage, ok := m.pages[pageChat].(*chat.Page)
+	if !ok {
+		return m, nil
+	}
+	if chatPage.HasPendingStream() {
+		chatPage.SystemMessage("wait for the current response to finish")
+		m.syncViewport()
+		return m, nil
+	}
+	if !chatPage.ClearSkills() {
+		chatPage.SystemMessage("no active skill to clear")
+		m.syncViewport()
+		return m, nil
+	}
+	if activeModel, activeErr := m.config.ActiveModel(); activeErr == nil {
+		if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok {
+			*toolsPage = *toolspage.NewPage(m.currentToolSpecs(activeModel))
+		}
+	}
+	if skillsPage, ok := m.pages[pageSkills].(*skillspage.Page); ok {
+		m.syncSkillsPageState(skillsPage)
+	}
+	m.persistActiveChat()
+	m.current = pageChat
+	m.input.Placeholder = m.currentPage().Placeholder()
+	m.syncViewport()
+	return m, nil
 }
 
 func (m *Model) handleCompactCommand() (tea.Model, tea.Cmd) {
@@ -364,7 +449,7 @@ func (m *Model) handleCompactCommand() (tea.Model, tea.Cmd) {
 	}
 
 	if chatPage.SystemPrompt() == "" {
-		systemPrompt, promptErr := m.chatSvc.BuildSystemPrompt(activeModel, m.mode)
+		systemPrompt, promptErr := m.chatSvc.BuildSystemPromptForSkill(activeModel, m.mode, chatPage.TurnSkill())
 		if promptErr == nil {
 			chatPage.SetSystemPrompt(systemPrompt)
 		}
@@ -396,7 +481,10 @@ func (m *Model) handleClearCommand() (tea.Model, tea.Cmd) {
 		m.input.Placeholder = m.currentPage().Placeholder()
 	}
 	if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok {
-		*toolsPage = *toolspage.NewPage(agenttools.Specs(activeModel, m.mode))
+		*toolsPage = *toolspage.NewPage(m.currentToolSpecs(activeModel))
+	}
+	if _, ok := m.pages[pageSkills].(*skillspage.Page); ok {
+		_, _ = m.refreshSkillsPage()
 	}
 	m.syncViewport()
 	return m, nil
@@ -417,7 +505,7 @@ func (m *Model) handleModelByID(id string) (tea.Model, tea.Cmd) {
 		modelsPage.SetCurrentModel(id)
 	}
 	if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok {
-		*toolsPage = *toolspage.NewPage(agenttools.Specs(model, m.mode))
+		*toolsPage = *toolspage.NewPage(m.currentToolSpecs(model))
 	}
 
 	m.current = pageChat
@@ -447,7 +535,7 @@ func (m *Model) handleRenameModel(id, name string) (tea.Model, tea.Cmd) {
 		chatPage.RefreshModel(model)
 	}
 	if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok && model.ID == m.config.Config.CurrentModel {
-		*toolsPage = *toolspage.NewPage(agenttools.Specs(model, m.mode))
+		*toolsPage = *toolspage.NewPage(m.currentToolSpecs(model))
 	}
 
 	m.syncViewport()
@@ -483,17 +571,91 @@ func (m *Model) handleResumeByID(id string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	chatPage.RestoreSession(session.ID, session.Title, session.UIMessages, session.ModelMessages)
+	chatPage.RestoreSessionState(session.ID, session.Title, session.UIMessages, session.ModelMessages, session.ActiveSkill, session.PendingSkill)
 	chatPage.SetSystemPrompt(session.SystemPrompt)
 	m.mode = agentmode.Chat
 	if activeModel, activeErr := m.config.ActiveModel(); activeErr == nil {
 		if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok {
-			*toolsPage = *toolspage.NewPage(agenttools.Specs(activeModel, m.mode))
+			*toolsPage = *toolspage.NewPage(m.currentToolSpecs(activeModel))
 		}
 	}
+	_, _ = m.refreshSkillsPage()
 	resumePage.MarkResumed(session.ID)
 	m.current = pageChat
 	m.input.Placeholder = m.currentPage().Placeholder()
+	m.syncViewport()
+	return m, nil
+}
+
+func (m *Model) handleSkillByName(name string) (tea.Model, tea.Cmd) {
+	var (
+		skill skillstore.Skill
+		found bool
+	)
+	for _, candidate := range m.skills {
+		if strings.EqualFold(candidate.Name, name) {
+			skill = candidate
+			found = true
+			break
+		}
+	}
+	if !found {
+		workingDir, err := os.Getwd()
+		if err != nil {
+			m.currentPage().SystemMessage(err.Error())
+			m.syncViewport()
+			return m, nil
+		}
+		loaded, err := skillstore.Find(workingDir, name)
+		if err != nil {
+			m.currentPage().SystemMessage(fmt.Sprintf("%s\nUse /skills to view available skills.", err.Error()))
+			m.syncViewport()
+			return m, nil
+		}
+		skill = loaded
+	}
+
+	chatPage, ok := m.pages[pageChat].(*chat.Page)
+	if !ok {
+		return m, nil
+	}
+	chatPage.ActivateSkill(skill)
+	if activeModel, activeErr := m.config.ActiveModel(); activeErr == nil {
+		if toolsPage, ok := m.pages[pageTools].(*toolspage.Page); ok {
+			*toolsPage = *toolspage.NewPage(m.currentToolSpecs(activeModel))
+		}
+	}
+	if skillsPage, ok := m.pages[pageSkills].(*skillspage.Page); ok {
+		m.syncSkillsPageState(skillsPage)
+	}
+	m.persistActiveChat()
+	m.current = pageChat
+	m.input.Placeholder = m.currentPage().Placeholder()
+	m.syncViewport()
+	return m, nil
+}
+
+func (m *Model) refreshSkillsPage() (tea.Model, tea.Cmd) {
+	skillsPage, ok := m.pages[pageSkills].(*skillspage.Page)
+	if !ok {
+		return m, nil
+	}
+	workingDir, err := os.Getwd()
+	if err != nil {
+		skillsPage.SystemMessage(err.Error())
+		m.syncViewport()
+		return m, nil
+	}
+	skills, err := skillstore.Load(workingDir)
+	if err != nil {
+		skillsPage.SystemMessage(err.Error())
+		m.syncViewport()
+		return m, nil
+	}
+	m.skills = skills
+	skillsPage.SetSkills(skills)
+	m.syncSkillsPageState(skillsPage)
+	skillsPage.SystemMessage(fmt.Sprintf("Reloaded %d skills.", len(skills)))
 	m.syncViewport()
 	return m, nil
 }
@@ -587,6 +749,8 @@ func (m *Model) persistActiveChat() {
 		UIMessages:    chatPage.UISnapshotMessages(),
 		SystemPrompt:  chatPage.SystemPrompt(),
 		ModelMessages: chatPage.SnapshotMessages(),
+		ActiveSkill:   chatPage.ActiveSkill(),
+		PendingSkill:  chatPage.PendingForkSkill(),
 		UpdatedAt:     time.Now(),
 	})
 	m.refreshResumePage()
@@ -628,4 +792,53 @@ func (m Model) streamFlushCmd() tea.Cmd {
 		return nil
 	}
 	return streamFlushTickCmd()
+}
+
+func (m *Model) tryHandleSkillAlias(name string) (tea.Model, tea.Cmd, bool) {
+	for _, skill := range m.skills {
+		if !strings.EqualFold(skill.Name, name) {
+			continue
+		}
+		model, cmd := m.handleSkillByName(skill.Name)
+		return model, cmd, true
+	}
+	return m, nil, false
+}
+
+func (m Model) syncSkillsPageState(skillsPage *skillspage.Page) {
+	if skillsPage == nil {
+		return
+	}
+	chatPage, ok := m.pages[pageChat].(*chat.Page)
+	if !ok {
+		skillsPage.SetActiveSkills("", "")
+		return
+	}
+	active := ""
+	pending := ""
+	if skill := chatPage.ActiveSkill(); skill != nil {
+		active = skill.Name
+	}
+	if skill := chatPage.PendingForkSkill(); skill != nil {
+		pending = skill.Name
+	}
+	skillsPage.SetActiveSkills(active, pending)
+}
+
+func (m Model) currentToolSpecs(model config.ModelConfig) []react.ToolSpec {
+	toolset := agenttools.Build(model, m.mode)
+	if chatPage, ok := m.pages[pageChat].(*chat.Page); ok {
+		if skill := chatPage.TurnSkill(); skill != nil && len(skill.AllowedTools) > 0 {
+			toolset = agenttools.FilterByName(toolset, skill.AllowedTools)
+		}
+	}
+	specs := make([]react.ToolSpec, 0, len(toolset))
+	for _, tool := range toolset {
+		specs = append(specs, react.ToolSpec{
+			Name:        tool.Name(),
+			Description: tool.Description(),
+			Parameters:  tool.Parameters(),
+		})
+	}
+	return specs
 }

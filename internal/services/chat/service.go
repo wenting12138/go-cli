@@ -17,6 +17,7 @@ import (
 	"go-cli/internal/modelclient/protocol"
 	"go-cli/internal/modules/chat/domain"
 	"go-cli/internal/prompt"
+	skillstore "go-cli/internal/skills"
 )
 
 type Service struct {
@@ -42,15 +43,23 @@ func New(bus *eventbus.Bus) *Service {
 }
 
 func (s *Service) StartStream(model config.ModelConfig, mode agentmode.Mode, messages []domain.Message) error {
+	return s.StartStreamWithSkill(model, mode, messages, nil)
+}
+
+func (s *Service) StartStreamWithSkill(model config.ModelConfig, mode agentmode.Mode, messages []domain.Message, activeSkill *skillstore.Skill) error {
 	client, err := modelclient.New(model)
 	if err != nil {
 		return err
 	}
-	systemPrompt, err := s.BuildSystemPrompt(model, mode)
+	toolset := tools.Build(model, mode)
+	if activeSkill != nil && len(activeSkill.AllowedTools) > 0 {
+		toolset = tools.FilterByName(toolset, activeSkill.AllowedTools)
+	}
+	systemPrompt, err := s.BuildSystemPrompt(model, mode, activeSkill, toolset)
 	if err != nil {
 		return err
 	}
-	agent := react.New(client, model, tools.Build(model, mode), s.promptBuilder, systemPrompt)
+	agent := react.New(client, model, toolset, s.promptBuilder, systemPrompt)
 
 	requestID := fmt.Sprintf("chat-%d", time.Now().UnixNano())
 	ctx, cancel := context.WithCancel(context.Background())
@@ -173,17 +182,31 @@ func (s *Service) Cancel(requestID string) bool {
 	return true
 }
 
-func (s *Service) BuildSystemPrompt(model config.ModelConfig, mode agentmode.Mode) (string, error) {
+func (s *Service) BuildSystemPrompt(model config.ModelConfig, mode agentmode.Mode, activeSkill *skillstore.Skill, toolset []react.Tool) (string, error) {
 	workingDir, err := os.Getwd()
 	if err != nil {
 		return "", fmt.Errorf("resolve working directory: %w", err)
 	}
+	availableSkills, err := skillstore.Load(workingDir)
+	if err != nil {
+		return "", err
+	}
 	return s.promptBuilder.Build(prompt.Input{
-		Model:      model,
-		Mode:       mode,
-		WorkingDir: workingDir,
-		Tools:      react.ToolDefinitions(tools.Build(model, mode)),
+		Model:       model,
+		Mode:        mode,
+		WorkingDir:  workingDir,
+		Tools:       react.ToolDefinitions(toolset),
+		Skills:      availableSkills,
+		ActiveSkill: cloneSkill(activeSkill),
 	})
+}
+
+func (s *Service) BuildSystemPromptForSkill(model config.ModelConfig, mode agentmode.Mode, activeSkill *skillstore.Skill) (string, error) {
+	toolset := tools.Build(model, mode)
+	if activeSkill != nil && len(activeSkill.AllowedTools) > 0 {
+		toolset = tools.FilterByName(toolset, activeSkill.AllowedTools)
+	}
+	return s.BuildSystemPrompt(model, mode, activeSkill, toolset)
 }
 
 func cloneArgs(args map[string]any) map[string]any {
@@ -210,6 +233,17 @@ func cloneAssistantBlocks(blocks []domain.AssistantContentBlock) []domain.Assist
 		out = append(out, cloned)
 	}
 	return out
+}
+
+func cloneSkill(skill *skillstore.Skill) *skillstore.Skill {
+	if skill == nil {
+		return nil
+	}
+	cloned := *skill
+	if len(skill.AllowedTools) > 0 {
+		cloned.AllowedTools = append([]string(nil), skill.AllowedTools...)
+	}
+	return &cloned
 }
 
 func (s *Service) storeCancel(requestID string, cancel context.CancelFunc) {

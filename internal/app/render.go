@@ -62,16 +62,23 @@ func (m Model) renderModelStatus() string {
 
 	sessionID := "-"
 	usedContext := 0
+	skillLabel := "-"
 	if chatPage, ok := m.pages[pageChat].(*chat.Page); ok && chatPage.SessionID() != "" {
 		sessionID = chatPage.SessionID()
 		usedContext = estimateContextUsage(chatPage.SystemPrompt(), chatPage.SnapshotMessages())
+		if skill := chatPage.PendingForkSkill(); skill != nil {
+			skillLabel = skill.Name + " (fork)"
+		} else if skill := chatPage.ActiveSkill(); skill != nil {
+			skillLabel = skill.Name
+		}
 	}
 
 	line := fmt.Sprintf(
-		"session: %s  mode: %s  model: %s  used: %s/%s  focus: %s",
+		"session: %s  mode: %s  model: %s  skill: %s  used: %s/%s  focus: %s",
 		sessionID,
 		m.mode,
 		model.ID,
+		skillLabel,
 		formatContextWindow(usedContext),
 		formatContextWindow(model.ContextWindow),
 		m.focus,

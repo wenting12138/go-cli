@@ -14,6 +14,7 @@ import (
 	"go-cli/internal/modules/shared"
 	chatservice "go-cli/internal/services/chat"
 	"go-cli/internal/sessionstore"
+	skillstore "go-cli/internal/skills"
 )
 
 type pageID string
@@ -24,6 +25,7 @@ const (
 	pageModels pageID = "models"
 	pageResume pageID = "resume"
 	pageTools  pageID = "tools"
+	pageSkills pageID = "skills"
 
 	focusInput    focusMode = "input"
 	focusViewport focusMode = "viewport"
@@ -113,6 +115,7 @@ type Model struct {
 	focus                focusMode
 	store                *sessionstore.Store
 	mode                 agentmode.Mode
+	skills               []skillstore.Skill
 	streamFlushPending   bool
 	lastMetrics          protocol.ResponseMetrics
 }

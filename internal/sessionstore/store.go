@@ -11,6 +11,7 @@ import (
 
 	"go-cli/internal/modules/chat/domain"
 	"go-cli/internal/modules/chat/ui"
+	skillstore "go-cli/internal/skills"
 )
 
 const (
@@ -33,6 +34,8 @@ type SessionData struct {
 	UIMessages    []ui.Message
 	SystemPrompt  string
 	ModelMessages []domain.Message
+	ActiveSkill   *skillstore.Skill
+	PendingSkill  *skillstore.Skill
 	UpdatedAt     time.Time
 }
 
@@ -48,11 +51,13 @@ type uiFile struct {
 }
 
 type modelFile struct {
-	ID           string           `json:"id"`
-	Title        string           `json:"title"`
-	UpdatedAt    time.Time        `json:"updated_at"`
-	SystemPrompt string           `json:"system_prompt,omitempty"`
-	Messages     []domain.Message `json:"messages"`
+	ID           string            `json:"id"`
+	Title        string            `json:"title"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+	SystemPrompt string            `json:"system_prompt,omitempty"`
+	Messages     []domain.Message  `json:"messages"`
+	ActiveSkill  *skillstore.Skill `json:"active_skill,omitempty"`
+	PendingSkill *skillstore.Skill `json:"pending_skill,omitempty"`
 }
 
 func New() (*Store, error) {
@@ -93,6 +98,8 @@ func (s *Store) Save(data SessionData) error {
 		UpdatedAt:    data.UpdatedAt,
 		SystemPrompt: data.SystemPrompt,
 		Messages:     cloneMessages(data.ModelMessages),
+		ActiveSkill:  cloneSkill(data.ActiveSkill),
+		PendingSkill: cloneSkill(data.PendingSkill),
 	}
 
 	if err := writeJSON(filepath.Join(dir, uiFileName), uiPayload); err != nil {
@@ -123,6 +130,8 @@ func (s *Store) Load(sessionID string) (SessionData, error) {
 		UIMessages:    ui.CloneMessages(uiPayload.Messages),
 		SystemPrompt:  modelPayload.SystemPrompt,
 		ModelMessages: cloneMessages(modelPayload.Messages),
+		ActiveSkill:   cloneSkill(modelPayload.ActiveSkill),
+		PendingSkill:  cloneSkill(modelPayload.PendingSkill),
 		UpdatedAt:     uiPayload.UpdatedAt,
 	}, nil
 }
@@ -213,6 +222,17 @@ func cloneAssistantBlocks(blocks []domain.AssistantContentBlock) []domain.Assist
 		out = append(out, cloned)
 	}
 	return out
+}
+
+func cloneSkill(skill *skillstore.Skill) *skillstore.Skill {
+	if skill == nil {
+		return nil
+	}
+	cloned := *skill
+	if len(skill.AllowedTools) > 0 {
+		cloned.AllowedTools = append([]string(nil), skill.AllowedTools...)
+	}
+	return &cloned
 }
 
 func preview(messages []ui.Message) string {
